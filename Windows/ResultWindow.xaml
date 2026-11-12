@@ -1,0 +1,23 @@
+<local:ToolWindow x:Class="Translated.ResultWindow" x:ClassModifier="internal"
+  xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:local="clr-namespace:Translated"
+  Title="Translation result · Translated" Width="500" Height="455" MinWidth="380" MinHeight="330" ShowActivated="False">
+  <Grid Margin="22,17,22,19">
+    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height=".7*"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+    <DockPanel Margin="0,0,0,13">
+      <ComboBox x:Name="SourcePicker" DockPanel.Dock="Right" Width="161" AutomationProperties.Name="Source language" ToolTip="Source language"/>
+      <TextBlock Text="Translation result" Style="{StaticResource Heading}" FontSize="21"/>
+    </DockPanel>
+    <TextBlock Grid.Row="1" Text="Original" Style="{StaticResource Hint}" Margin="0,0,0,4"/>
+    <TextBox x:Name="Original" Grid.Row="2" IsReadOnly="True" TextWrapping="Wrap" VerticalContentAlignment="Top" VerticalScrollBarVisibility="Auto" Background="{DynamicResource Field}" AutomationProperties.Name="Original"/>
+    <TextBlock Grid.Row="3" Text="Translation" Style="{StaticResource Hint}" Margin="0,11,0,4"/>
+    <TextBox x:Name="Output" Grid.Row="4" IsReadOnly="True" TextWrapping="Wrap" VerticalContentAlignment="Top" VerticalScrollBarVisibility="Auto" AutomationProperties.Name="Translation"/>
+    <StackPanel Grid.Row="5" Margin="0,10,0,0">
+      <TextBlock x:Name="Reason" TextWrapping="Wrap" FontSize="13" AutomationProperties.LiveSetting="Polite"/>
+      <DockPanel Margin="0,7,0,0">
+        <Button x:Name="CopyButton" Style="{StaticResource Primary}" Content="Copy translation" DockPanel.Dock="Right" Click="CopyClick"/>
+        <Button x:Name="Retry" Content="Translate again" Click="RetryClick" HorizontalAlignment="Left"/>
+      </DockPanel>
+    </StackPanel>
+  </Grid>
+</local:ToolWindow>
