@@ -20,6 +20,34 @@ namespace Translated.Tests
             SynchronizationContext.SetSynchronizationContext(new Forms.WindowsFormsSynchronizationContext());
             Theme.Initialize();
         }
+        internal static void ShortcutEditorFixture()
+        {
+            Initialize();
+            string folder = Path.Combine(Path.GetTempPath(),"Translated-shortcut-editor-"+Guid.NewGuid().ToString("N"));
+            string settings = Path.Combine(folder,"settings.json");
+            new Preferences { Hotkey = new Shortcut { Modifiers = 7, Key = 121 } }.Save(settings);
+            try
+            {
+                using (var app = new TranslatorApp(settings,false))
+                {
+                    bool? saved = null;
+                    EventHandler open = null;
+                    open = (sender,args) => {
+                        Forms.Application.Idle -= open;
+                        using (var editor = new ShortcutEditor(app) { ShowInTaskbar = true, WindowStartupLocation = WindowStartupLocation.CenterScreen })
+                        {
+                            saved = editor.ShowDialog();
+                        }
+                        Forms.Application.ExitThread();
+                    };
+                    Forms.Application.Idle += open;
+                    Forms.Application.Run();
+                    var prefs = Preferences.Load(settings);
+                    Console.WriteLine("Editor saved="+saved+" shortcut="+prefs.Hotkey);
+                }
+            }
+            finally { File.Delete(settings); Directory.Delete(folder); }
+        }
 
         internal static void Run(string folder)
         {
@@ -36,7 +64,7 @@ namespace Translated.Tests
                     EventHandler render = null;
                     render = async (s,e) => {
                         Forms.Application.Idle -= render;
-                        try { await Render(folder); }
+                        try { await Render(folder, app); }
                         catch (Exception ex) { failure = ex; }
                         finally { Forms.Application.ExitThread(); }
                     };
@@ -57,7 +85,7 @@ namespace Translated.Tests
             var png = new PngBitmapEncoder(); png.Frames.Add(BitmapFrame.Create(bitmap));
             using (var stream = File.Create(file)) png.Save(stream);
         }
-        static async Task Render(string folder)
+        static async Task Render(string folder, TranslatorApp app)
         {
             var windows = Application.Current.Windows.Cast<Window>().ToList();
             var workspace = windows.OfType<Workspace>().Single();
@@ -69,6 +97,27 @@ namespace Translated.Tests
             Theme.ApplyPalette(true,false); await Task.Delay(70); Save(workspace,Path.Combine(folder,"Dark.png")); Theme.Refresh();
             workspace.Open(true); await Task.Delay(80);
             Save(workspace,Path.Combine(folder,"Settings.png"));
+            using (var editor = new ShortcutEditor(app) { Owner = workspace })
+            {
+                editor.Show(); await Task.Delay(150);
+                editor.CaptureButton.RaiseEvent(new RoutedEventArgs(System.Windows.Controls.Primitives.ButtonBase.ClickEvent));
+                var recorder = (ShortcutRecorder)typeof(ShortcutEditor).GetField("recorder",
+                    System.Reflection.BindingFlags.Instance | System.Reflection.BindingFlags.NonPublic).GetValue(editor);
+                recorder.Clear();
+                foreach (int key in new[] { 17, 16, 'K', 5 }) recorder.Toggle(key);
+                typeof(ShortcutEditor).GetMethod("Refresh",System.Reflection.BindingFlags.Instance |
+                    System.Reflection.BindingFlags.NonPublic).Invoke(editor,null);
+                await Task.Delay(80);
+                Save(editor,Path.Combine(folder,"Custom-shortcut.png"),1.5);
+                if (!editor.SaveShortcutButton.IsEnabled || editor.Mouse4Key.IsChecked != true ||
+                    !editor.Combination.Text.Contains("K") || editor.Draft.Keys.Length != 2)
+                    throw new Exception("Custom editor did not reflect the selected keyboard/mouse chord.");
+                Theme.ApplyPalette(true,false); await Task.Delay(70);
+                Save(editor,Path.Combine(folder,"Custom-shortcut-dark.png"),1.5);
+                editor.Width = 870; editor.Height = 660; await Task.Delay(70);
+                Save(editor,Path.Combine(folder,"Custom-shortcut-small.png"),1.5);
+                Theme.Refresh();
+            }
             workspace.SettingsPage.ScrollToBottom(); await Task.Delay(80);
             Save(workspace,Path.Combine(folder,"Settings-options.png"));
             workspace.Width = 465; workspace.Height = 510; workspace.Open(false); await Task.Delay(80);
@@ -87,6 +136,7 @@ namespace Translated.Tests
             }
             Console.WriteLine("PASS  rendered both pages and inline translation at normal and minimum sizes");
             Console.WriteLine("PASS  dark palette and negative-coordinate monitor geometry at 100%, 150% and 200%");
+            Console.WriteLine("PASS  custom keyboard/mouse shortcut editor at normal and minimum sizes in light and dark themes");
         }
     }
 }

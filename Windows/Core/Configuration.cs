@@ -92,13 +92,15 @@ namespace Translated
         public const int Alt = 1, Ctrl = 2, Shift = 4, Win = 8, F1 = 112;
         [DataMember] public int Modifiers;
         [DataMember] public int Key;
+        // Null for older settings; Key remains the primary key for backwards compatibility.
+        [DataMember(EmitDefaultValue = false)] public int[] AdditionalKeys;
         public static Shortcut Default() => new Shortcut { Modifiers = Ctrl | Shift, Key = F1 + 7 };
-        public static string KeyName(int key) => key == ' ' ? "Space" : key >= F1 ? "F" + (key - F1 + 1) : ((char)key).ToString();
-        public bool Valid => Modifiers >= 1 && Modifiers <= 15 && Modifiers != Shift &&
-            ((Key >= 'A' && Key <= 'Z') || (Key >= '0' && Key <= '9') || Key == ' ' || (Key >= F1 && Key < F1 + 11)) &&
-            !(Modifiers == Ctrl && "ACVXYZ ".IndexOf((char)Key) >= 0) &&
-            !(Modifiers == Alt && (Key == F1 + 3 || Key == ' '));
-        public bool Same(Shortcut other) => other != null && Modifiers == other.Modifiers && Key == other.Key;
+        public static string KeyName(int key) => ShortcutKeys.Name(key);
+        public int[] Keys => new[] { Key }.Concat(AdditionalKeys ?? new int[0]).Distinct().OrderBy(k => k).ToArray();
+        public string ValidationMessage => ShortcutKeys.Validate(this);
+        public bool Valid => ValidationMessage == null;
+        public bool Native => Keys.Length == 1 && !ShortcutKeys.Mouse(Key);
+        public bool Same(Shortcut other) => other != null && Modifiers == other.Modifiers && Keys.SequenceEqual(other.Keys);
         public override string ToString()
         {
             var names = new List<string>();
@@ -106,7 +108,7 @@ namespace Translated
             if ((Modifiers & Alt) != 0) names.Add("Alt");
             if ((Modifiers & Shift) != 0) names.Add("Shift");
             if ((Modifiers & Win) != 0) names.Add("Win");
-            names.Add(KeyName(Key));
+            names.AddRange(Keys.OrderBy(k => ShortcutKeys.Mouse(k) ? 1 : 0).ThenBy(k => k).Select(KeyName));
             return string.Join(" + ", names);
         }
     }
@@ -164,7 +166,7 @@ namespace Translated
 
         public void Apply(Shortcut candidate, Action persist)
         {
-            if (!candidate.Valid) throw new InvalidOperationException("请选择其他组合，保留常用的编辑和系统快捷键。");
+            if (!candidate.Valid) throw new InvalidOperationException(candidate.ValidationMessage);
             if (candidate.Same(Current)) { persist(); return; }
             int next = id == 1 ? 2 : 1;
             if (!register(next, candidate)) throw new InvalidOperationException("快捷键已被占用，请换一个组合。");

@@ -1,5 +1,4 @@
 using System;
-using System.Linq;
 using System.Reflection;
 using System.Windows;
 using System.Windows.Controls;
@@ -10,8 +9,6 @@ namespace Translated
     internal partial class Workspace : ToolWindow
     {
         readonly TranslatorApp app;
-        readonly int[] keys = Enumerable.Range('A',26).Concat(Enumerable.Range('0',10))
-            .Concat(Enumerable.Range(Shortcut.F1,11)).Concat(new[]{32}).ToArray();
         bool loading = true, busy;
 
         internal Workspace(TranslatorApp app)
@@ -20,13 +17,10 @@ namespace Translated
             InitializeComponent();
             Icon = System.Windows.Media.Imaging.BitmapFrame.Create(new Uri("pack://application:,,,/Translated;component/Assets/Brand.png"));
             VersionLabel.Text = Assembly.GetExecutingAssembly().GetName().Version.ToString(3);
-            KeyPicker.ItemsSource = keys.Select(Shortcut.KeyName).ToArray();
             // The platform-only entry stays identifiable in the Mac provider list.
             ProviderPicker.Items.Add(new ComboBoxItem { Content = "Apple · macOS only", IsEnabled = false });
             foreach (var name in Provider.Choices)
                 ProviderPicker.Items.Add(new ComboBoxItem { Content = ServiceLabel(name), Tag = name });
-            foreach (var toggle in new[] { Ctrl, Alt, Shift, Win }) toggle.Click += (s,e) => UpdateApply();
-            KeyPicker.SelectionChanged += (s,e) => UpdateApply();
             foreach (var toggle in new[] { Replace, Floating, WeChat }) toggle.Click += OptionsChanged;
             Simplified.Click += OptionsChanged; Traditional.Click += OptionsChanged;
             Input.IsKeyboardFocusWithinChanged += (s,e) => EditorBorder.SetResourceReference(Border.BorderBrushProperty,
@@ -113,34 +107,24 @@ namespace Translated
             SettingsStatus.Text = text;
         }
 
-        Shortcut DraftShortcut() => new Shortcut {
-            Key = KeyPicker.SelectedIndex < 0 ? 0 : keys[KeyPicker.SelectedIndex],
-            Modifiers = (Ctrl.IsChecked == true ? Shortcut.Ctrl : 0) | (Alt.IsChecked == true ? Shortcut.Alt : 0) |
-                (Shift.IsChecked == true ? Shortcut.Shift : 0) | (Win.IsChecked == true ? Shortcut.Win : 0) };
-        void UpdateApply()
-        {
-            if (!loading && KeyPicker.SelectedIndex >= 0)
-                Apply.Content = "Apply " + DraftShortcut().ToString().Replace(" + ", "+");
-        }
         void LoadShortcut()
         {
             var shortcut = app.Prefs.Hotkey;
-            Ctrl.IsChecked = (shortcut.Modifiers & Shortcut.Ctrl) != 0;
-            Alt.IsChecked = (shortcut.Modifiers & Shortcut.Alt) != 0;
-            Shift.IsChecked = (shortcut.Modifiers & Shortcut.Shift) != 0;
-            Win.IsChecked = (shortcut.Modifiers & Shortcut.Win) != 0;
-            KeyPicker.SelectedIndex = Array.IndexOf(keys, shortcut.Key);
             ActiveShortcut.Text = app.HotkeyReady ? "Active · " + shortcut.ToString().Replace(" + ", "+") : "Unavailable";
             ShortcutHint.Text = app.HotkeyReady ? "Select text, then press  " + shortcut : "Select text, then click Translate";
-            UpdateApply();
         }
         void SetShortcut(Shortcut shortcut)
         {
             try { app.SaveShortcut(shortcut); LoadShortcut(); ShortcutStatus.Text = ""; }
             catch (Exception e) { ShortcutStatus.Text = e.Message; }
         }
-        void ApplyShortcut(object sender, RoutedEventArgs e) => SetShortcut(DraftShortcut());
         void ResetShortcut(object sender, RoutedEventArgs e) => SetShortcut(Shortcut.Default());
+        void CustomShortcutClick(object sender, RoutedEventArgs e)
+        {
+            app.Cancel();
+            using (var editor = new ShortcutEditor(app) { Owner = this })
+                if (editor.ShowDialog() == true) { LoadShortcut(); ShortcutStatus.Text = ""; }
+        }
 
         string Service => (string)(ProviderPicker.SelectedItem as ComboBoxItem)?.Tag;
         Provider Draft() => new Provider { Name = Service, BaseUrl = Address.Text.Trim(), Model = Model.Text.Trim(), Reasoning = Low.IsChecked == true };
