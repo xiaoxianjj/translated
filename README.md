@@ -1,5 +1,12 @@
 # Translated
 
+Translated 提供 Windows 和 macOS 两个独立版本。选择适合自己系统的版本：
+
+- **macOS 15 或更新版本**：[下载安装包](https://github.com/xiaoxianjj/translated/releases) · [macOS 使用与构建说明](macOS/README.md)。
+- **Windows 10/11**：参见下方说明和 [Windows 使用说明](Windows/使用说明.txt)。
+
+## Windows
+
 Translated 是 Windows 10 和 Windows 11 上的划词翻译工具。选中文字后按 **Ctrl + Shift + F8**，或点击选区旁的 **Translate**。英文译为简体或繁体中文，其他语言译为英文。快捷键、目标中文和选区按钮都可以在 Settings 中调整。
 
 在可编辑的输入框中，程序会核对选区后原位替换文字。在只读区域中，译文会复制到剪贴板。如果焦点或选区在翻译过程中发生变化，可以从系统托盘的 **Translation result** 取回译文。
