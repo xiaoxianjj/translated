@@ -66,6 +66,8 @@ namespace Translated
         public Preferences Prefs { get; private set; }
         public bool Closing { get; private set; }
         public bool HotkeyReady => listener.Registered;
+        internal void BeginShortcutCapture(IntPtr window, Action<int, bool> receive) => listener.BeginCapture(window, receive);
+        internal void EndShortcutCapture() => listener.EndCapture();
         internal bool Busy => active != null;
 
         internal TranslatorApp(string settingsPath = null, bool open = true)
@@ -225,8 +227,8 @@ namespace Translated
                 bool Current() => !token.IsCancellationRequested && Stable();
                 if (candidate == null)
                 {
-                    for (int i = 0; i < 65 && (Desktop.ModifiersDown || Desktop.Down(Prefs.Hotkey.Key)); i++) await Task.Delay(25,token);
-                    if (Desktop.ModifiersDown || Desktop.Down(Prefs.Hotkey.Key)) throw new InvalidOperationException("请松开快捷键后重试。");
+                    for (int i = 0; i < 65 && listener.ShortcutHeld; i++) await Task.Delay(25,token);
+                    if (listener.ShortcutHeld) throw new InvalidOperationException("请松开快捷键后重试。");
                 }
                 // A floating-button query may still be initializing a slow provider. Give
                 // an explicit shortcut time to wait for it without running UIA in parallel.

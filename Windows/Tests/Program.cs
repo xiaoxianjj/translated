@@ -42,6 +42,12 @@ namespace Translated.Tests
             try
             {
 #if NET48
+            if (args.Length == 4 && args[0] == "--shortcut-key" && int.TryParse(args[1],out int fixtureKey) &&
+                long.TryParse(args[3],out long fixtureWindow))
+            { ShortcutDesktopChecks.InjectKey(fixtureKey,args[2]=="1",fixtureWindow); return 0; }
+            if (args.Length == 1 && args[0] == "--shortcuts") { ShortcutDesktopChecks.Run(); return 0; }
+            if (args.Length == 1 && args[0] == "--shortcut-keyboard") { ShortcutDesktopChecks.RunKeyboardFixture(); return 0; }
+            if (args.Length == 1 && args[0] == "--shortcut-editor") { VisualChecks.ShortcutEditorFixture(); return 0; }
             if (args.Length == 2 && args[0] == "--probe-selection" && int.TryParse(args[1],out int processId) && processId>0)
             { SelectionProbe.Run(processId); return 0; }
             if (args.Length == 2 && args[0] == "--render") { VisualChecks.Run(args[1]); return 0; }
@@ -105,6 +111,80 @@ namespace Translated.Tests
                 var c = Shortcut.Default(); Require(c.Valid); Equal("Ctrl + Shift + F8", c.ToString());
                 Require(!new Shortcut { Modifiers = Shortcut.Ctrl, Key = 'C' }.Valid);
                 Require(!new Shortcut { Modifiers = 6, Key = Shortcut.F1 + 11 }.Valid);
+            });
+            Check("custom shortcuts keep legacy settings and round-trip multi-key mouse chords", () => {
+                var old = Json.Read<Shortcut>(Encoding.UTF8.GetBytes("{\"Modifiers\":6,\"Key\":119}"));
+                Require(old.Valid && old.Native && old.Same(Shortcut.Default()));
+                var chord = ShortcutKeys.FromKeys(new[] { 0xA2, 0xA0, 'K', ShortcutKeys.Mouse4 });
+                Require(chord.Valid && !chord.Native && chord.Modifiers == 6);
+                var saved = Json.Read<Shortcut>(Json.Write(chord));
+                Require(chord.Same(saved) && saved.ToString().Contains("Mouse 4") && saved.ToString().Contains("K"));
+                Require(chord.Same(new Shortcut { Modifiers = 6, Key = 'K', AdditionalKeys = new[] { 5, 'K' } }));
+                Require(new Shortcut { Key = 5 }.Valid && !new Shortcut { Key = 'K' }.Valid);
+            });
+            Check("custom shortcut validation rejects reserved combinations and supports extended keys", () => {
+                foreach (var keys in new[] { new[] { 17, 'C' }, new[] { 18, 9 }, new[] { 91, 'L' }, new[] { 17, 18, 46 },
+                    new[] { 17, 123 }, new[] { 17, 'A', 'B', 'C', 'D', 'E' }, new[] { 16, 'K' } })
+                    Require(!ShortcutKeys.FromKeys(keys).Valid);
+                foreach (var keys in new[] { new[] { 17, 186 }, new[] { 18, 100 }, new[] { 5, 6 }, new[] { 4 },
+                    new[] { 17, 16, 'K', 'J' }, new[] { 17, 38 }, new[] { 124 } })
+                    Require(ShortcutKeys.FromKeys(keys).Valid);
+                Equal("Num 4", Shortcut.KeyName(100)); Equal("F13", Shortcut.KeyName(124));
+            });
+            Check("mouse and multi-key shortcuts require the full chord and do not autorepeat", () => {
+                var chord = ShortcutKeys.FromKeys(new[] { 17, 'K', 5 });
+                var state = new ShortcutChordState();
+                Require(!state.Update(chord, 0xA2, true));
+                Require(!state.Update(chord, 'K', true));
+                Require(state.Update(chord, 5, true));
+                Require(!state.Update(chord, 5, true));
+                Require(!state.Update(chord, 5, false));
+                Require(state.Update(chord, 5, true));
+                state.Reset();
+                Require(!state.Update(chord, 16, true));
+                Require(!state.Update(chord, 17, true));
+                Require(!state.Update(chord, 'K', true));
+                Require(!state.Update(chord, 5, true));
+            });
+            Check("left and right modifiers preserve physical ownership until both release", () => {
+                var chord = new Shortcut { Modifiers = Shortcut.Ctrl, Key = 5 };
+                var state = new ShortcutChordState();
+                state.Update(chord, 0xA2, true); state.Update(chord, 0xA3, true);
+                state.Update(chord, 0xA2, false);
+                Require(state.Update(chord, 5, true));
+                state.Update(chord, 5, false); state.Update(chord, 0xA3, false);
+                Require(!state.Update(chord, 5, true));
+            });
+            Check("mouse chords reconcile keys already held before registration and discard released modifiers", () => {
+                var chord = ShortcutKeys.FromKeys(new[] { 17, 'K', 5 });
+                var state = new ShortcutChordState();
+                state.SynchronizeKeyboard(k => k == 162 || k == 'K');
+                Require(state.Update(chord,5,true));
+                state.Update(chord,5,false);
+                state.SynchronizeKeyboard(k => k == 'K');
+                Require(!state.Update(chord,5,true));
+            });
+            Check("recorder latches a gesture, replaces it on the next and supports virtual plus physical selection", () => {
+                var recorder = new ShortcutRecorder(Shortcut.Default());
+                recorder.Input(0xA2, true); recorder.Input('K', true);
+                Require(recorder.Candidate.Same(new Shortcut { Modifiers = 2, Key = 'K' }));
+                recorder.Input('K', false); recorder.Input(0xA2, false);
+                Require(recorder.Selected.Contains('K') && !recorder.Holding('K'));
+                recorder.Input(5, true); recorder.Input(5, false);
+                Require(recorder.Candidate.Same(new Shortcut { Key = 5 }));
+                recorder.Clear(); recorder.Toggle(17); recorder.Toggle(16);
+                recorder.Input(6, true); recorder.Input(6, false);
+                Require(recorder.Candidate.Same(new Shortcut { Modifiers = 6, Key = 6 }));
+                recorder.Toggle(6); Require(recorder.Candidate.Key == 0 && !recorder.Candidate.Valid);
+            });
+            Check("failed custom shortcut persistence releases the candidate and retains the previous binding", () => {
+                var held = new HashSet<int>();
+                var b = new HotkeyBinding((id,c) => held.Add(id), id => held.Remove(id));
+                var old = Shortcut.Default(); b.Apply(old, () => {});
+                Throws(() => b.Apply(new Shortcut { Key = 5 }, () => { throw new InvalidOperationException("fixture"); }));
+                Require(b.Current.Same(old) && held.Count == 1);
+                b.Apply(new Shortcut { Key = 5 }, () => {}); Require(b.Current.Key == 5 && held.Count == 1);
+                b.Release(); Require(held.Count == 0);
             });
             Check("hotkey conflict keeps old registration and settings", () => {
                 var held = new Dictionary<int,int>();
