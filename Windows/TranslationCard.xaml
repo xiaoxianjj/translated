@@ -1,0 +1,31 @@
+<local:ToolWindow x:Class="Translated.TranslationCard" x:ClassModifier="internal"
+  xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+  xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" xmlns:local="clr-namespace:Translated"
+  Title="Translated · 译文卡片" Width="450" Height="356" WindowStyle="None" ResizeMode="NoResize"
+  AllowsTransparency="True" Background="Transparent" ShowInTaskbar="False" ShowActivated="False" Topmost="False"
+  WindowStartupLocation="Manual">
+  <Border Margin="7" Background="{DynamicResource Paper}" BorderBrush="{DynamicResource Line}" BorderThickness="1" CornerRadius="16" Padding="18,15">
+    <Border.Effect><DropShadowEffect BlurRadius="10" ShadowDepth="2" Opacity="0.15"/></Border.Effect>
+    <Grid>
+      <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+      <DockPanel>
+        <Button x:Name="CloseButton" Content="×" DockPanel.Dock="Right" Style="{StaticResource Quiet}" Padding="8,0" FontSize="23" Click="CloseClick" AutomationProperties.Name="关闭译文卡片"/>
+        <TextBlock Text="译文" Style="{StaticResource Heading}" FontSize="20" VerticalAlignment="Center"/>
+      </DockPanel>
+      <DockPanel Grid.Row="1" Margin="0,12,0,12">
+        <TextBlock Text="翻译为" Foreground="{DynamicResource Muted}" VerticalAlignment="Center" Margin="0,0,12,0"/>
+        <ComboBox x:Name="TargetPicker" SelectionChanged="TargetChanged" AutomationProperties.Name="译文目标语言"/>
+      </DockPanel>
+      <Grid Grid.Row="2">
+        <TextBox x:Name="Translation" IsReadOnly="True" TextWrapping="Wrap" AcceptsReturn="True" VerticalScrollBarVisibility="Auto" VerticalContentAlignment="Top" Background="{DynamicResource Field}" FontSize="17" Padding="12,10" AutomationProperties.Name="卡片译文"/>
+        <TextBlock x:Name="LoadingLabel" Text="正在翻译…" VerticalAlignment="Center" HorizontalAlignment="Center" Foreground="{DynamicResource Muted}" IsHitTestVisible="False"/>
+      </Grid>
+      <TextBlock x:Name="Status" Grid.Row="3" TextWrapping="Wrap" FontSize="12" Margin="0,8,0,0" AutomationProperties.LiveSetting="Polite"/>
+      <DockPanel Grid.Row="4" Margin="0,10,0,0">
+        <Button x:Name="CopyButton" Content="复制译文" DockPanel.Dock="Right" Style="{StaticResource Primary}" Click="CopyClick" Padding="14,7"/>
+        <Button x:Name="RetryButton" Content="重新翻译" DockPanel.Dock="Right" Style="{StaticResource Quiet}" Click="RetryClick" Padding="10,7" Margin="0,0,7,0"/>
+        <TextBlock x:Name="SourcePreview" TextTrimming="CharacterEllipsis" Foreground="{DynamicResource Muted}" FontSize="12" VerticalAlignment="Center" Margin="0,0,8,0"/>
+      </DockPanel>
+    </Grid>
+  </Border>
+</local:ToolWindow>

@@ -22,11 +22,10 @@
     <ScrollViewer x:Name="EditorScroll" Grid.Row="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
     <Grid x:Name="EditorPage">
       <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*" MinHeight="85"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="0"/></Grid.RowDefinitions>
-      <StackPanel Orientation="Horizontal">
-        <TextBlock Text="English" Style="{StaticResource Heading}" FontSize="33"/>
-        <TextBlock Text="⇄" FontSize="27" Foreground="{DynamicResource Muted}" Margin="14,0"/>
-        <TextBlock Text="中文" FontFamily="Microsoft YaHei UI" FontSize="29" FontWeight="SemiBold"/>
-      </StackPanel>
+      <DockPanel>
+        <TextBlock Text="自动识别 →" Style="{StaticResource Heading}" FontSize="22" Margin="0,0,14,0" VerticalAlignment="Center"/>
+        <ComboBox x:Name="TargetPicker" SelectionChanged="TargetChanged" FontSize="16" AutomationProperties.Name="目标语言"/>
+      </DockPanel>
       <TextBlock x:Name="ShortcutHint" Grid.Row="1" Style="{StaticResource Hint}" FontSize="15" Margin="0,5,0,12"/>
       <DockPanel Grid.Row="2" Margin="0,4,0,15">
         <Button x:Name="Paste" DockPanel.Dock="Right" Click="PasteClick" Style="{StaticResource Quiet}" AutomationProperties.Name="Paste">
@@ -115,6 +114,7 @@
         </DockPanel>
         <TextBlock x:Name="SettingsStatus" Style="{StaticResource Feedback}" AutomationProperties.LiveSetting="Polite"/>
         <Border Height="1" Background="{DynamicResource Line}" Margin="0,20"/>
+        <CheckBox x:Name="PreviewCard" Content="划词后弹出译文卡片" Style="{StaticResource Switch}"/>
         <CheckBox x:Name="Replace" Content="Replace selected text while typing" Style="{StaticResource Switch}"/>
         <CheckBox x:Name="Floating" Content="Show button after selection" Style="{StaticResource Switch}"/>
         <CheckBox x:Name="WeChat" Content="Check WeChat selections with Copy" Style="{StaticResource Switch}" ToolTip="Temporarily copies an otherwise unreadable WeChat text selection to verify it."/>
@@ -122,7 +122,7 @@
           <Border DockPanel.Dock="Right" Background="{DynamicResource Soft}" CornerRadius="6"><StackPanel Orientation="Horizontal">
             <RadioButton x:Name="Simplified" Content="简体中文" GroupName="Chinese"/><RadioButton x:Name="Traditional" Content="繁體中文" GroupName="Chinese"/>
           </StackPanel></Border>
-          <TextBlock Text="Translate English to"/>
+          <TextBlock Text="自动模式的中文"/>
         </DockPanel>
       </StackPanel>
     </ScrollViewer>

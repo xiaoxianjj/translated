@@ -10,6 +10,7 @@ namespace Translated
         const string Auto = "Auto-detect";
         readonly TranslatorApp app;
         string originalText, completeText;
+        string targetLanguage;
         internal bool HasResult => originalText != null;
 
         internal ResultWindow(TranslatorApp app)
@@ -21,9 +22,10 @@ namespace Translated
                     .Select(c => c.EnglishName).OrderBy(n => n, StringComparer.Ordinal)).Distinct().ToArray();
             SourcePicker.SelectedIndex = 0;
         }
-        internal void Store(string source, string translation, string language, string message)
+        internal void Store(string source, string translation, string language, string message, string target = null)
         {
             originalText = source ?? ""; completeText = translation;
+            targetLanguage = target;
             Original.Text = originalText; Output.Text = translation ?? "";
             SourcePicker.SelectedItem = language ?? Auto;
             CopyButton.IsEnabled = !string.IsNullOrEmpty(translation);
@@ -32,7 +34,7 @@ namespace Translated
             Reason.Text = message;
         }
         void RetryClick(object sender, RoutedEventArgs e) =>
-            app.Manual(originalText, SourcePicker.SelectedIndex > 0 ? (string)SourcePicker.SelectedItem : null, true);
+            app.Manual(originalText, SourcePicker.SelectedIndex > 0 ? (string)SourcePicker.SelectedItem : null, true, targetLanguage);
         void CopyClick(object sender, RoutedEventArgs e)
         {
             try

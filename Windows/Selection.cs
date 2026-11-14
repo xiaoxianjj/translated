@@ -49,6 +49,7 @@ namespace Translated
         public uint Process;
         public Point Location;
         public bool Native, Writable;
+        internal bool CopyOnly;
         public int Start, End;
         public AutomationElement Owner, Focused;
         public TextPatternRange Range;
@@ -359,6 +360,20 @@ namespace Translated
             return WeChat(window) ? Read(window, null, true, stillCurrent) : null;
         }
 
+        // Explicit card requests may copy a selection even when a Chromium fork does not
+        // publish a text range. This snapshot grants no permission to replace or paste.
+        internal static Selection ReadCopyCandidate(IntPtr window, Point pointer, Func<bool> current)
+        {
+            if (!current() || !Desktop.External(window) || Desktop.GetForegroundWindow() != window) return null;
+            var focus = Desktop.Focus(window);
+            if (!Desktop.ChromiumContent(window,focus)) return null;
+            var element = AutomationElement.FocusedElement;
+            if (element == null || element.GetCurrentPropertyValue(AutomationElement.IsPasswordProperty,true) as bool? != false ||
+                !SafeSource(element,window) || !current()) return null;
+            return new Selection { Window=window, Process=Desktop.ProcessOf(window), Focus=focus,
+                Focused=element, CopyOnly=true, Writable=false, Location=Desktop.RootAt(pointer)==window ? pointer : Desktop.FocusPoint(window,focus) };
+        }
+
         internal static async Task<Selection> Recheck(Selection original, CancellationToken token, Func<bool> stillCurrent = null)
             => (await CheckForDelivery(original,token,stillCurrent)).Value;
 
@@ -384,6 +399,12 @@ namespace Translated
                 if (!original.Foreground || original.Process != Desktop.ProcessOf(original.Window) ||
                     (stillCurrent != null && !stillCurrent())) return new SelectionCheck(SelectionIssue.Interrupted);
                 Selection now;
+                if (original.CopyOnly)
+                {
+                    now = ReadCopyCandidate(original.Window,original.Location,stillCurrent ?? (() => true));
+                    return now != null && original.MatchesFocus(now.Focused)
+                        ? new SelectionCheck(now) : new SelectionCheck(SelectionIssue.UnsafeSource);
+                }
                 if (original.Range == null)
                     now = Read(original.Window, original.Native ? null : original.Anchor, !original.Native, stillCurrent);
                 else

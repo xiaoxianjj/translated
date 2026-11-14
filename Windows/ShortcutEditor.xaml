@@ -51,9 +51,12 @@
     </Style>
   </Window.Resources>
   <Grid Margin="28,24,28,20">
+    <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+    <Grid>
     <Grid.RowDefinitions>
-      <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/>
-      <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+      <RowDefinition Height="Auto"/>
     </Grid.RowDefinitions>
     <DockPanel>
       <Border DockPanel.Dock="Right" CornerRadius="14" Background="{DynamicResource Sage}" Padding="10,6"
@@ -79,8 +82,7 @@
         </StackPanel>
       </DockPanel>
     </Border>
-    <ScrollViewer Grid.Row="2" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-      <StackPanel>
+      <StackPanel Grid.Row="2">
         <Grid Margin="0,0,0,8">
           <Grid.ColumnDefinitions><ColumnDefinition Width="4*"/><ColumnDefinition/></Grid.ColumnDefinitions>
           <StackPanel>
@@ -134,11 +136,12 @@
         <TextBlock Text="显示通用布局，快捷键对已连接的所有键鼠生效。Fn 或厂商专用宏键需要先在设备驱动中映射为普通按键。"
           Style="{StaticResource Hint}" FontSize="11" Margin="0,3,0,0"/>
       </StackPanel>
-    </ScrollViewer>
     <Border Grid.Row="3" CornerRadius="10" Background="{DynamicResource Field}" Padding="13,11" Margin="0,16,0,16">
       <TextBlock x:Name="Validation" TextWrapping="Wrap" FontSize="12" AutomationProperties.LiveSetting="Polite"/>
     </Border>
-    <DockPanel Grid.Row="4">
+    </Grid>
+    </ScrollViewer>
+    <DockPanel Grid.Row="1">
       <Button x:Name="SaveShortcutButton" Content="保存快捷键" Click="SaveClick" Style="{StaticResource Primary}" DockPanel.Dock="Right" MinWidth="130"/>
       <Button x:Name="CancelShortcutButton" Content="取消" Click="CancelClick" Style="{StaticResource Quiet}" DockPanel.Dock="Right" Margin="0,0,14,0"/>
       <TextBlock Text="只有保存后才会生效，取消保留原快捷键。" Style="{StaticResource Hint}" FontSize="12"/>

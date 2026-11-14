@@ -62,12 +62,17 @@ namespace Translated
             return thread != 0 && GetGUIThreadInfo(thread, ref info) ? info.Focus : IntPtr.Zero;
         }
 
-        static string ClassName(IntPtr window)
+        internal static string ClassName(IntPtr window)
         {
             var name = new StringBuilder(256);
             GetClassName(window, name, name.Capacity);
             return name.ToString();
         }
+        // Chromium derivatives can omit TextPattern while retaining a native web-content HWND.
+        // Never use an address bar, native password box or an unrelated application for this fallback.
+        internal static bool ChromiumContent(IntPtr window, IntPtr focus) => focus != IntPtr.Zero &&
+            GetAncestor(focus,2) == window && ClassName(window).StartsWith("Chrome_WidgetWin",StringComparison.Ordinal) &&
+            ClassName(focus).Equals("Chrome_RenderWidgetHostHWND",StringComparison.Ordinal);
         static bool ClassicEdit(string cls) => cls.Equals("Edit", StringComparison.OrdinalIgnoreCase) ||
             cls.StartsWith("WindowsForms10.EDIT.", StringComparison.OrdinalIgnoreCase);
         public static bool NativeEdit(IntPtr window)

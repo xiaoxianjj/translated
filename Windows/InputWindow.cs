@@ -29,7 +29,7 @@ namespace Translated
         static readonly uint ReopenMessage = RegisterWindowMessage("Translated.Windows.Reopen.82878f02");
         const uint CustomShortcutMessage = 0x8000 + 117;
         readonly int header = Marshal.SizeOf<Header>();
-        readonly IntPtr packet = Marshal.AllocHGlobal(64);
+        IntPtr packet = Marshal.AllocHGlobal(64);
         readonly HotkeyBinding binding;
         readonly ShortcutHooks hooks = new ShortcutHooks();
         readonly ForegroundEvent foregroundEvent;
@@ -39,6 +39,7 @@ namespace Translated
         int ignoredMouseDown;
         int ignoredMouseTick;
         bool escapeRegistered;
+        bool disposed;
         int revision;
         readonly bool rawInput;
         public int Revision => Volatile.Read(ref revision);
@@ -48,6 +49,9 @@ namespace Translated
         public event Action ShortcutPressed, EscapePressed, Reopen, KeyboardSelection;
         public event Action<Point?> Interacted;
         public event Action<Point, bool> LeftButton;
+        internal event Action<Point> PointerInteracted;
+        internal event Action<IntPtr> ForegroundChanged;
+        internal event Action KeyboardInteracted;
 
         public InputWindow()
         {
@@ -63,7 +67,7 @@ namespace Translated
             rawInput = RegisterRawInputDevices(devices, 2, (uint)Marshal.SizeOf<Device>());
             lastForeground = Desktop.GetForegroundWindow();
             foregroundEvent = (h, e, w, o, c, t, ms) => {
-                if (w != lastForeground) { lastForeground = w; Changed(); }
+                ObserveForeground(w);
             };
             foregroundHook = SetWinEventHook(3, 3, IntPtr.Zero, foregroundEvent, 0, 0, 0); // EVENT_SYSTEM_FOREGROUND
             Monitoring = rawInput && foregroundHook != IntPtr.Zero;
@@ -83,11 +87,23 @@ namespace Translated
             else if (!active && escapeRegistered) { UnregisterHotKey(Handle,3); escapeRegistered = false; }
         }
 
+        internal void ObserveForeground(IntPtr notified)
+        {
+            // WinEvent callbacks are queued. A notification for a window that is no
+            // longer foreground must not invalidate a newer hotkey or dismiss its card.
+            if (notified == IntPtr.Zero || notified != Desktop.GetForegroundWindow() || notified == lastForeground) return;
+            lastForeground = notified; Changed(); ForegroundChanged?.Invoke(notified);
+        }
+
         protected override void WndProc(ref Message m)
         {
+            if (disposed) { base.WndProc(ref m); return; }
             if ((m.Msg == 0x312 || (uint)m.Msg == CustomShortcutMessage) && !hooks.Capturing &&
                 binding?.Current != null && m.WParam.ToInt32() == binding.Id)
             {
+                // Account for a pending foreground notification before the app snapshots
+                // its input revision. The later callback then becomes a harmless duplicate.
+                ObserveForeground(Desktop.GetForegroundWindow());
                 if ((uint)m.Msg == CustomShortcutMessage)
                 {
                     int key = m.LParam.ToInt32();
@@ -132,6 +148,7 @@ namespace Translated
                 if (vk == triggerDown || (binding.Current?.Keys.Contains(vk) == true && binding.Current.Modifiers == rawModifiers &&
                     (binding.Current.Native || hooks.Active(binding.Id)))) return;
                 Changed();
+                KeyboardInteracted?.Invoke();
                 selectionKey = SelectionPolicy.KeyboardGesture(vk,(rawModifiers & Shortcut.Shift)!=0 || Desktop.Down(0x10),
                     (rawModifiers & Shortcut.Ctrl)!=0 || Desktop.Down(0x11),(rawModifiers & Shortcut.Alt)!=0 || Desktop.Down(0x12),
                     (rawModifiers & Shortcut.Win)!=0 || Desktop.Down(0x5B) || Desktop.Down(0x5C)) ? vk : 0;
@@ -147,7 +164,7 @@ namespace Translated
                 if (buttons == 0) return;
                 int pos = GetMessagePos();
                 var point = new Point((short)pos, (short)(pos >> 16));
-                if ((buttons & 0xD55) != 0) Changed((buttons & 1) != 0 ? point : (Point?)null);
+                if ((buttons & 0xD55) != 0) { Changed((buttons & 1) != 0 ? point : (Point?)null); PointerInteracted?.Invoke(point); }
                 if ((buttons & 1) != 0) LeftButton?.Invoke(point, true);
                 if ((buttons & 2) != 0) LeftButton?.Invoke(point, false);
             }
@@ -155,13 +172,22 @@ namespace Translated
 
         public void Dispose()
         {
-            binding.Release();
-            hooks.Dispose();
-            WatchEscape(false);
-            if (foregroundHook != IntPtr.Zero) UnhookWinEvent(foregroundHook);
-            if (rawInput) RegisterRawInputDevices(new[] { DeviceFor(2, 1), DeviceFor(6, 1) }, 2, (uint)Marshal.SizeOf<Device>());
-            DestroyHandle();
-            Marshal.FreeHGlobal(packet);
+            if (disposed) return;
+            disposed = true;
+            try
+            {
+                binding.Release();
+                hooks.Dispose();
+                WatchEscape(false);
+                if (foregroundHook != IntPtr.Zero) UnhookWinEvent(foregroundHook);
+                if (rawInput) RegisterRawInputDevices(new[] { DeviceFor(2, 1), DeviceFor(6, 1) }, 2, (uint)Marshal.SizeOf<Device>());
+                DestroyHandle();
+            }
+            finally
+            {
+                var buffer = Interlocked.Exchange(ref packet,IntPtr.Zero);
+                if (buffer != IntPtr.Zero) Marshal.FreeHGlobal(buffer);
+            }
         }
     }
 }
