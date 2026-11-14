@@ -1,5 +1,6 @@
 using System;
 using System.Drawing;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Net.Http;
@@ -29,7 +30,7 @@ namespace Translated
 
     internal sealed class TranslatorApp : ApplicationContext
     {
-        enum Kind { Selection, Manual, Retry, Test }
+        enum Kind { Selection, Card, Manual, Retry, Test }
         sealed class PendingPaste
         {
             internal readonly uint Written;
@@ -42,11 +43,16 @@ namespace Translated
             internal Kind Kind;
             internal Point StatusPoint;
             internal string Source, Language;
+            internal string Target;
+            internal Guid CardId;
+            internal IntPtr OriginWindow;
             internal CancellationToken Token => Stop.Token;
             public void Dispose() => Stop.Dispose();
         }
 
         readonly string configFile;
+        readonly bool diagnosticEnabled;
+        readonly Queue<string> shortcutTrace = new Queue<string>();
         readonly InputWindow listener = new InputWindow();
         readonly Popup popup = new Popup();
         readonly Motion motion = new Motion();
@@ -56,6 +62,7 @@ namespace Translated
         readonly ToolStripMenuItem reviewItem, cancelItem, floatingItem;
         readonly Workspace workspace;
         readonly ResultWindow result;
+        readonly TranslationCard card;
         readonly SemaphoreSlim jobGate = new SemaphoreSlim(1);
         readonly SemaphoreSlim copyProbe = new SemaphoreSlim(1);
         Job active;
@@ -72,6 +79,7 @@ namespace Translated
 
         internal TranslatorApp(string settingsPath = null, bool open = true)
         {
+            diagnosticEnabled = settingsPath == null;
             configFile = settingsPath ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
                 "Translated", "settings.json");
             string startup = "";
@@ -81,7 +89,7 @@ namespace Translated
             catch (Exception e) { startup = e.Message; }
             if (!listener.Monitoring) startup = "系统输入监听不可用，译文会保留在结果窗口。";
             tray = new NotifyIcon { Icon = icon, Text = "Translated · 划词翻译", ContextMenuStrip = menu, Visible = true };
-            workspace = new Workspace(this); result = new ResultWindow(this);
+            workspace = new Workspace(this); result = new ResultWindow(this); card = new TranslationCard(this);
             menu.Items.Add("Translate", null, (s,e) => workspace.Open(false));
             reviewItem = (ToolStripMenuItem)menu.Items.Add("Translation result", null, (s,e) => result.Present(true));
             reviewItem.Enabled = false;
@@ -98,11 +106,22 @@ namespace Translated
             tray.DoubleClick += (s,e) => workspace.Open(false);
             listener.ShortcutPressed += () => {
                 var window = Desktop.GetForegroundWindow();
+                NoteShortcutState("received");
                 if (Desktop.External(window)) StartSelection(window, Cursor.Position, null);
             };
-            listener.EscapePressed += Cancel;
+            listener.EscapePressed += () => {
+                // Let the focused card handle Esc locally (including its language menu).
+                if (Desktop.GetForegroundWindow() != new System.Windows.Interop.WindowInteropHelper(card).Handle) Cancel("escape");
+            };
             listener.Interacted += point => {
                 if (popup.IsVisible && !(point.HasValue && popup.PixelBounds.Contains(point.Value))) popup.Dismiss();
+            };
+            listener.PointerInteracted += point => {
+                if (card.IsVisible && !card.ContainsPoint(point)) DismissCard("outside-pointer");
+            };
+            listener.ForegroundChanged += HandleCardForeground;
+            listener.KeyboardInteracted += () => {
+                if (card.IsVisible && !card.OwnsWindow(Desktop.GetForegroundWindow())) DismissCard("outside-keyboard");
             };
             listener.LeftButton += Mouse;
             listener.KeyboardSelection += () => {
@@ -110,6 +129,7 @@ namespace Translated
                 if (Desktop.External(window) && Prefs.Floating) ShowSelectionButton(window, null);
             };
             listener.Reopen += () => workspace.Open(false);
+            NoteShortcutState(listener.Registered ? "ready" : "shortcut-unavailable");
             if (open) workspace.Open(startup.Length != 0);
             if (startup.Length != 0) workspace.SettingsText(startup);
         }
@@ -132,19 +152,40 @@ namespace Translated
             Prefs = prefs;
         }
 
+        async void HandleCardForeground(IntPtr window)
+        {
+            // Opening a window can generate transient activation notifications. Only
+            // dismiss a card already shown, after confirming a sustained app switch.
+            if (!card.IsVisible || window == IntPtr.Zero || window == card.SourceWindow || card.OwnsWindow(window)) return;
+            var session = card.Session;
+            await Task.Delay(220);
+            if (Closing || !card.IsVisible || card.Session != session) return;
+            var current = Desktop.GetForegroundWindow();
+            if (current != IntPtr.Zero && current != card.SourceWindow && !card.OwnsWindow(current))
+                DismissCard("foreground-switch");
+        }
+
         public void SaveShortcut(Shortcut combo)
         {
             var prefs = Prefs.Copy(); prefs.Hotkey = combo;
             listener.Apply(combo, () => prefs.Save(configFile));
             Prefs = prefs;
         }
-        public void SaveOptions(bool traditional, bool replace, bool floating, bool weChatCopy)
+        public void SaveOptions(bool traditional, bool replace, bool floating, bool weChatCopy, bool? preview = null)
         {
             var prefs = Prefs.Copy();
             prefs.Traditional = traditional; prefs.Replace = replace; prefs.Floating = floating; prefs.WeChatCopy = weChatCopy;
+            if (preview.HasValue) prefs.SelectionMode = preview.Value ? "card" : "automatic";
             prefs.Save(configFile); Prefs = prefs;
             floatingItem.Checked = floating;
             if (!floating) { gestureVersion++; popup.Dismiss(); }
+        }
+
+        internal void SaveTarget(string target)
+        {
+            var prefs = Prefs.Copy(); prefs.TargetLanguage = TranslationLanguages.Find(target).Code;
+            prefs.Save(configFile); Prefs = prefs;
+            workspace.RefreshTarget();
         }
 
         void Mouse(Point point, bool pressed)
@@ -218,7 +259,8 @@ namespace Translated
             var previousPaste = pendingPaste?.Written == atTrigger ? pendingPaste : null;
             var focus = Desktop.Focus(window);
             bool Stable() => listener.Revision == revision && Desktop.GetForegroundWindow() == window && Desktop.Focus(window) == focus;
-            Start(Kind.Selection,candidate?.Text,null,async job => {
+            bool preview = Prefs.SelectionMode != "automatic";
+            Start(preview ? Kind.Card : Kind.Selection,candidate?.Text,null,async job => {
                 // The gate has finished the previous job's cleanup. Follow only the exact
                 // restore of the temporary clipboard generation observed at this trigger.
                 uint? clipboard = previousPaste == null ? atTrigger : previousPaste.Restored;
@@ -229,24 +271,62 @@ namespace Translated
                 {
                     for (int i = 0; i < 65 && listener.ShortcutHeld; i++) await Task.Delay(25,token);
                     if (listener.ShortcutHeld) throw new InvalidOperationException("请松开快捷键后重试。");
+                    if (preview && Desktop.GetForegroundWindow() == window)
+                    {
+                        // Keyboard layout/IME and browser focus can settle while modifiers
+                        // are released. Capture the current read-only selection after that.
+                        focus = Desktop.Focus(window); revision = listener.Revision;
+                    }
                 }
+                if (preview) motion.Display(MotionState.Translating,job.StatusPoint);
+                if (preview) NoteShortcutState("reading-selection");
                 // A floating-button query may still be initializing a slow provider. Give
                 // an explicit shortcut time to wait for it without running UIA in parallel.
                 var selection = candidate == null
                     ? await SelectionReader.Query(() => SelectionReader.ReadShortcut(window,pointer,Current),token,2500)
                     : await SelectionReader.Recheck(candidate,token,Current);
                 token.ThrowIfCancellationRequested();
-                if (selection == null || !Current()) throw new InvalidOperationException("选区已失效或没有可读取的文字。");
+                if (selection == null && preview && candidate == null && Current())
+                    selection = await SelectionReader.Query(() => SelectionReader.ReadCopyCandidate(window,pointer,Current),token,1500);
+                if (!Current())
+                {
+                    if (Desktop.GetForegroundWindow() != window) { NoteShortcutState("cancel:source-changed-before-read"); job.Stop.Cancel(); token.ThrowIfCancellationRequested(); }
+                    throw new InvalidOperationException("读取选区时焦点或输入发生变化，请重新划选并松开快捷键后重试。");
+                }
+                if (selection == null)
+                {
+                    NoteSelectionFailure("capture",new SelectionCheck(SelectionIssue.NoRange));
+                    throw new InvalidOperationException("无法读取当前选区。请重新划选文字后按快捷键；也可复制原文到主窗口翻译。");
+                }
                 if (selection.Text == null)
                 {
                     var read = clipboard.HasValue ? await ReadWithCopy(selection,clipboard.Value,Current,token) : null;
                     token.ThrowIfCancellationRequested();
-                    if (read == null || !Current() || (candidate?.Text != null && read.Text != candidate.Text))
-                        throw new InvalidOperationException("无法确认所选文字，请重新选择。");
+                    if (!Current())
+                    {
+                        if (Desktop.GetForegroundWindow() != window) { NoteShortcutState("cancel:source-changed-during-copy"); job.Stop.Cancel(); token.ThrowIfCancellationRequested(); }
+                        throw new InvalidOperationException("复制取词时选区状态发生变化，请重新划选后重试。");
+                    }
+                    if (read == null || (candidate?.Text != null && read.Text != candidate.Text))
+                    {
+                        NoteSelectionFailure("capture-copy",new SelectionCheck(SelectionIssue.NoRange));
+                        throw new InvalidOperationException("无法通过复制读取选中文字。请重新划选后重试，或复制到主窗口翻译。");
+                    }
                     selection.Text = read.Text; clipboard = read.After;
                 }
                 job.Source = selection.Text;
                 job.StatusPoint = selection.Location;
+                if (preview)
+                {
+                    motion.Dismiss();
+                    card.Begin(job.CardId,job.Source,job.Language,job.Target,job.StatusPoint,job.OriginWindow);
+                    NoteShortcutState("card-shown:visible-at-position="+card.ContainsPoint(
+                        new Point(card.PixelBounds.Left+30,card.PixelBounds.Top+30)));
+                    string text = await Translate(job);
+                    job.Token.ThrowIfCancellationRequested();
+                    Review(job,text,"");
+                    return;
+                }
                 motion.Display(MotionState.Translating, job.StatusPoint);
                 string translated = await Translate(job);
                 token.ThrowIfCancellationRequested();
@@ -309,7 +389,7 @@ namespace Translated
                 }
                 catch (OperationCanceledException) { throw; }
                 catch (Exception error) { token.ThrowIfCancellationRequested(); Review(job,translated,error.Message); }
-            });
+            },originWindow:window);
         }
 
         static string CheckMessage(SelectionIssue issue)
@@ -342,6 +422,22 @@ namespace Translated
                 string version = typeof(TranslatorApp).Assembly.GetName().Version.ToString(3);
                 File.WriteAllLines(path,new[] { "utc="+DateTime.UtcNow.ToString("O"), "version="+version, "stage="+stage,
                     "issue="+check.Issue, "retryAfter="+check.FirstIssue, "elapsedMs="+check.ElapsedMilliseconds });
+            }
+            catch (IOException) {} catch (UnauthorizedAccessException) {}
+        }
+
+        void NoteShortcutState(string stage)
+        {
+            if (!diagnosticEnabled) return;
+            // One overwritten diagnostic, never source text, typed keys or window titles.
+            try {
+                var folder = Path.GetDirectoryName(configFile);
+                Directory.CreateDirectory(folder);
+                File.WriteAllLines(Path.Combine(folder,"last-shortcut-state.txt"),new[] {
+                    "utc="+DateTime.UtcNow.ToString("O"), "stage="+stage, "registered="+listener.Registered });
+                shortcutTrace.Enqueue(DateTime.UtcNow.ToString("O")+" "+stage);
+                while (shortcutTrace.Count > 48) shortcutTrace.Dequeue();
+                File.WriteAllLines(Path.Combine(folder,"last-shortcut-trace.txt"),shortcutTrace);
             }
             catch (IOException) {} catch (UnauthorizedAccessException) {}
         }
@@ -384,16 +480,34 @@ namespace Translated
             if (!Prefs.Configured) throw new InvalidOperationException("请在 Settings 选择翻译服务并保存设置。");
             var profile = Prefs.Profile(Prefs.Active);
             return await Translator.Translate(job.Source,profile,Credentials.Load(profile),Prefs.Traditional,job.Token,
-                sourceLanguage:job.Language);
+                direction:TranslationLanguages.Find(job.Target).Direction,sourceLanguage:job.Language);
         }
 
-        internal void Manual(string text, string language = null, bool retry = false)
+        internal void Manual(string text, string language = null, bool retry = false, string target = null)
         {
             Start(retry ? Kind.Retry : Kind.Manual,text,language,async job => {
                 var translated = await Translate(job);
                 job.Token.ThrowIfCancellationRequested();
                 Review(job,translated,"");
-            });
+            },target);
+        }
+        internal void RetranslateCard(string target)
+        {
+            if (!card.IsVisible || string.IsNullOrWhiteSpace(card.Source)) return;
+            try { SaveTarget(target); }
+            catch (Exception error) {
+                if (active?.Kind == Kind.Card) active.Stop.Cancel();
+                card.Complete(card.Session,null,error.Message); return;
+            }
+            var source = card.Source; var language = card.SourceLanguage;
+            var session = card.Session; var point = card.Anchor; var origin = card.SourceWindow;
+            Start(Kind.Card,source,language,async job => {
+                job.StatusPoint = point;
+                card.Begin(session,source,language,target,point,origin);
+                var translated = await Translate(job);
+                job.Token.ThrowIfCancellationRequested();
+                Review(job,translated,"");
+            },target,session,origin);
         }
         internal void TestProvider(Provider profile, string draftKey)
         {
@@ -416,24 +530,35 @@ namespace Translated
         {
             job.Token.ThrowIfCancellationRequested();
             reviewItem.Enabled = true;
-            result.Store(job.Source,translated,job.Language,reason);
+            result.Store(job.Source,translated,job.Language,reason,job.Target);
+            if (job.Kind == Kind.Card)
+            {
+                motion.Dismiss();
+                if (card.Session != job.CardId) card.Begin(job.CardId,job.Source,job.Language,job.Target,job.StatusPoint,job.OriginWindow);
+                card.Complete(job.CardId,translated,reason);
+                tray.Text = translated == null ? "Translated · Translation failed" : "Translated · Ready";
+                return;
+            }
             if (job.Kind == Kind.Selection)
                 motion.Display(translated == null ? MotionState.Failed : MotionState.Review, job.StatusPoint, reason);
             bool inline = job.Kind != Kind.Manual || workspace.ShowTranslation(job.Source,translated,reason);
             tray.Text = translated == null ? "Translated · Translation failed" :
                 job.Kind == Kind.Selection || !inline ? "Translated · Review result" : "Translated · Ready";
         }
-        async void Start(Kind kind, string source, string language, Func<Job,Task> work)
+        async void Start(Kind kind, string source, string language, Func<Job,Task> work, string target = null, Guid? cardId = null, IntPtr originWindow = default)
         {
             if (Closing) return;
             var previous = active;
-            var job = new Job { Kind = kind, Source = source, Language = language };
+            var job = new Job { Kind = kind, Source = source, Language = language,
+                Target = target ?? Prefs.TargetLanguage, CardId = cardId ?? Guid.NewGuid(), OriginWindow = originWindow, StatusPoint = Cursor.Position };
+            if (!cardId.HasValue) card.Dismiss();
             active = job; gestureVersion++; popup.Dismiss();
             motion.Dismiss();
             previous?.Stop.Cancel();
+            if (kind == Kind.Card) NoteShortcutState("starting");
             tray.Text = "Translated · Translating";
             if (kind == Kind.Manual) workspace.ShowTranslation(null,null,"");
-            listener.WatchEscape(true);
+            listener.WatchEscape(kind != Kind.Card);
             cancelItem.Enabled = true; workspace.SetBusy(true,kind == Kind.Test); workspace.StatusText("");
             bool entered = false;
             try
@@ -446,6 +571,10 @@ namespace Translated
             {
                 if (!job.Stop.IsCancellationRequested)
                 {
+                    if (kind == Kind.Card) NoteShortcutState("failed");
+                    if (kind == Kind.Card && job.OriginWindow != IntPtr.Zero &&
+                        Desktop.GetForegroundWindow() != job.OriginWindow && !card.OwnsWindow(Desktop.GetForegroundWindow()))
+                    { NoteShortcutState("cancel:source-changed-before-error"); job.Stop.Cancel(); return; }
                     string message = error is OperationCanceledException ? "翻译服务响应超时。" :
                         error is HttpRequestException ? "无法连接翻译服务，请检查网络和接口地址。" : error.Message;
                     if (kind == Kind.Test) { workspace.SettingsText(message); tray.Text = "Translated · Translation failed"; }
@@ -457,14 +586,26 @@ namespace Translated
             finally
             {
                 if (entered) jobGate.Release();
-                if (active == job) { active = null; listener.WatchEscape(false); cancelItem.Enabled = false; workspace.SetBusy(false); }
+                if (active == job) {
+                    active = null; listener.WatchEscape(false); cancelItem.Enabled = false; workspace.SetBusy(false);
+                    if (kind == Kind.Card) motion.Dismiss();
+                    if (kind == Kind.Card && job.Stop.IsCancellationRequested) NoteShortcutState("cancelled");
+                }
                 job.Dispose();
             }
         }
 
-        public void Cancel()
+        internal void DismissCard(string reason = "dismiss")
+        {
+            NoteShortcutState("dismiss:"+reason);
+            card.Dismiss();
+            if (active?.Kind == Kind.Card) { motion.Dismiss(); active.Stop.Cancel(); }
+        }
+
+        public void Cancel(string reason = "manual")
         {
             if (Closing) return;
+            NoteShortcutState("cancel:"+reason);
             var job = active;
             if (job != null)
             {
@@ -472,6 +613,7 @@ namespace Translated
                 else workspace.StatusText("已取消");
             }
             gestureVersion++; popup.Dismiss();
+            card.Dismiss();
             motion.Dismiss();
             if (job != null) tray.Text = "Translated · Cancelled";
             job?.Stop.Cancel();
@@ -489,7 +631,7 @@ namespace Translated
             if (disposing)
             {
                 Closing = true; tray.Visible = false;
-                listener.Dispose(); popup.Dispose(); motion.Dispose(); result.Dispose(); workspace.Dispose(); tray.Dispose(); menu.Dispose(); icon.Dispose();
+                listener.Dispose(); popup.Dispose(); motion.Dispose(); card.Dispose(); result.Dispose(); workspace.Dispose(); tray.Dispose(); menu.Dispose(); icon.Dispose();
             }
             base.Dispose(disposing);
         }

@@ -46,12 +46,16 @@ namespace Translated.Tests
                 long.TryParse(args[3],out long fixtureWindow))
             { ShortcutDesktopChecks.InjectKey(fixtureKey,args[2]=="1",fixtureWindow); return 0; }
             if (args.Length == 1 && args[0] == "--shortcuts") { ShortcutDesktopChecks.Run(); return 0; }
+            if (args.Length == 1 && args[0] == "--cards") { TranslationCardChecks.Run(); return 0; }
+            if (args.Length == 1 && args[0] == "--cards-real-hotkey") { TranslationCardChecks.Run(true); return 0; }
+            if (args.Length == 1 && args[0] == "--card-preview") { TranslationCardChecks.Preview(); return 0; }
             if (args.Length == 1 && args[0] == "--shortcut-keyboard") { ShortcutDesktopChecks.RunKeyboardFixture(); return 0; }
             if (args.Length == 1 && args[0] == "--shortcut-editor") { VisualChecks.ShortcutEditorFixture(); return 0; }
             if (args.Length == 2 && args[0] == "--probe-selection" && int.TryParse(args[1],out int processId) && processId>0)
             { SelectionProbe.Run(processId); return 0; }
             if (args.Length == 2 && args[0] == "--render") { VisualChecks.Run(args[1]); return 0; }
             if (args.Length == 2 && args[0] == "--browser") { BrowserChecks.Run(args[1]); return 0; }
+            if (args.Length == 2 && args[0] == "--browser-card-compat") { BrowserChecks.Run(args[1],cardCompat:true); return 0; }
             if (args.Length == 2 && args[0] == "--browser-cold") { BrowserChecks.Run(args[1], true); return 0; }
             if (args.Length == 2 && args[0] == "--browser-cold-busy") { BrowserChecks.Run(args[1], true, true); return 0; }
             if (args.Length == 2 && args[0] == "--browser-range-owner") { BrowserChecks.Run(args[1], true, false, true); return 0; }
@@ -75,6 +79,37 @@ namespace Translated.Tests
         {
             var local = Provider.Default(Provider.Custom); local.Model = "fixture";
             var ds = Provider.Default(Provider.DeepSeek);
+            Check("all 21 explicit target languages override automatic routing and source hints", () => {
+                Equal(22, TranslationLanguages.All.Length);
+                Equal(22, TranslationLanguages.All.Select(l => l.Code).Distinct().Count());
+                foreach (var language in TranslationLanguages.All.Skip(1))
+                foreach (string hint in new[] { null, "English", "French" })
+                {
+                    var request = Translator.Build(ds, true, Passage.Split("hello").Single(), language.Direction, hint);
+                    Require(request.messages[0].content.Contains("Translate into " + language.PromptName + " as explicitly requested"));
+                    Require(!request.messages[0].content.Contains("every other language -> English"));
+                }
+                Require(TranslationLanguages.Find("ar").RightToLeft);
+                Equal("auto", TranslationLanguages.Find("unsupported").Code);
+            });
+            Check("old settings migrate to cards while explicit automatic delivery and language survive", () => {
+                string folder = Path.Combine(Path.GetTempPath(), "translated-language-test-" + Guid.NewGuid().ToString("N"));
+                string path = Path.Combine(folder,"settings.json");
+                Directory.CreateDirectory(folder);
+                try {
+                    File.WriteAllText(path,"{\"Configured\":true,\"Replace\":true}");
+                    var old = Preferences.Load(path);
+                    Require(old.Configured && old.Replace);
+                    Equal("card",old.SelectionMode); Equal("auto",old.TargetLanguage);
+                    old.SelectionMode="automatic"; old.TargetLanguage="ja"; old.Save(path);
+                    var saved=Preferences.Load(path);
+                    Equal("automatic",saved.SelectionMode); Equal("ja",saved.TargetLanguage);
+                    saved.SelectionMode="bad"; saved.TargetLanguage="bad"; saved.Save(path);
+                    Equal("card",Preferences.Load(path).SelectionMode);
+                    Equal("auto",Preferences.Load(path).TargetLanguage);
+                }
+                finally { File.Delete(path); Directory.Delete(folder); }
+            });
             Check("selection keyboard gestures exclude typing and unrelated modifiers", () => {
                 Require(SelectionPolicy.KeyboardGesture('A', false, true, false, false));
                 foreach (int key in Enumerable.Range(0x21, 8))

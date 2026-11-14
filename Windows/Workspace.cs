@@ -15,13 +15,14 @@ namespace Translated
         {
             this.app = app;
             InitializeComponent();
+            TargetPicker.ItemsSource = TranslationLanguages.All;
             Icon = System.Windows.Media.Imaging.BitmapFrame.Create(new Uri("pack://application:,,,/Translated;component/Assets/Brand.png"));
             VersionLabel.Text = Assembly.GetExecutingAssembly().GetName().Version.ToString(3);
             // The platform-only entry stays identifiable in the Mac provider list.
             ProviderPicker.Items.Add(new ComboBoxItem { Content = "Apple · macOS only", IsEnabled = false });
             foreach (var name in Provider.Choices)
                 ProviderPicker.Items.Add(new ComboBoxItem { Content = ServiceLabel(name), Tag = name });
-            foreach (var toggle in new[] { Replace, Floating, WeChat }) toggle.Click += OptionsChanged;
+            foreach (var toggle in new[] { Replace, Floating, WeChat, PreviewCard }) toggle.Click += OptionsChanged;
             Simplified.Click += OptionsChanged; Traditional.Click += OptionsChanged;
             Input.IsKeyboardFocusWithinChanged += (s,e) => EditorBorder.SetResourceReference(Border.BorderBrushProperty,
                 Input.IsKeyboardFocusWithin ? "Accent" : "Line");
@@ -30,6 +31,24 @@ namespace Translated
         }
 
         internal static string ServiceLabel(string name) => name == Provider.Custom ? "Custom / Local LLM" : name;
+        internal void RefreshTarget()
+        {
+            bool wasLoading = loading; loading = true;
+            bool changed = (TargetPicker.SelectedItem as TranslationLanguage)?.Code != app.Prefs.TargetLanguage;
+            TargetPicker.SelectedItem = TranslationLanguages.Find(app.Prefs.TargetLanguage);
+            if (changed && OutputArea != null) ShowTranslation(null,null,"");
+            loading = wasLoading;
+        }
+        void TargetChanged(object sender, SelectionChangedEventArgs e)
+        {
+            if (loading) return;
+            try {
+                app.Cancel();
+                app.SaveTarget((TargetPicker.SelectedItem as TranslationLanguage)?.Code);
+                ShowTranslation(null,null,"");
+            }
+            catch (Exception error) { RefreshTarget(); StatusText(error.Message); }
+        }
         void PageChanged(object sender, RoutedEventArgs e)
         {
             if (SettingsPage == null) return;
@@ -90,6 +109,7 @@ namespace Translated
             }
             bool visible = !string.IsNullOrEmpty(text);
             ManualOutput.Text = text ?? "";
+            ManualOutput.FlowDirection = TranslationLanguages.Find(app.Prefs.TargetLanguage).RightToLeft ? FlowDirection.RightToLeft : FlowDirection.LeftToRight;
             OutputArea.Visibility = visible ? Visibility.Visible : Visibility.Collapsed;
             EditorPage.RowDefinitions[6].MinHeight = visible ? 120 : 0;
             EditorPage.RowDefinitions[6].Height = visible ? new GridLength(1,GridUnitType.Star) : new GridLength(0);
@@ -187,7 +207,10 @@ namespace Translated
         void OptionsChanged(object sender, RoutedEventArgs e)
         {
             if (loading) return;
-            try { app.SaveOptions(Traditional.IsChecked == true, Replace.IsChecked == true, Floating.IsChecked == true, WeChat.IsChecked == true); }
+            try {
+                app.SaveOptions(Traditional.IsChecked == true, Replace.IsChecked == true, Floating.IsChecked == true, WeChat.IsChecked == true, PreviewCard.IsChecked == true);
+                RefreshOptions();
+            }
             catch (Exception ex) { RefreshOptions(); SettingsText(ex.Message); }
         }
         internal void RefreshOptions()
@@ -195,6 +218,9 @@ namespace Translated
             var p = app.Prefs;
             Simplified.IsChecked = !p.Traditional; Traditional.IsChecked = p.Traditional;
             Replace.IsChecked = p.Replace; Floating.IsChecked = p.Floating; WeChat.IsChecked = p.WeChatCopy;
+            PreviewCard.IsChecked = p.SelectionMode != "automatic";
+            Replace.Visibility = PreviewCard.IsChecked == true ? Visibility.Collapsed : Visibility.Visible;
+            RefreshTarget();
         }
         void UpdateFooter()
         {

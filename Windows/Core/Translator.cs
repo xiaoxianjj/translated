@@ -10,7 +10,6 @@ using System.Threading.Tasks;
 
 namespace Translated
 {
-    internal enum OutputLanguage { Auto, SimplifiedChinese, TraditionalChinese, English }
     [DataContract] internal sealed class Payload
     {
         [DataMember] public string text;
@@ -55,11 +54,11 @@ namespace Translated
             string routing = direction == OutputLanguage.Auto
                 ? "Detect the language of the passage using its context. English -> " + chinese +
                   ". Chinese and every other language -> English. Prefer English for ambiguous short valid English words."
-                : "Translate into " + (direction == OutputLanguage.English ? "English" :
-                  direction == OutputLanguage.TraditionalChinese ? "Traditional Chinese" : "Simplified Chinese") + " as explicitly requested.";
-            if (sourceLanguage != null)
+                : "Translate into " + TranslationLanguages.Find(direction).PromptName + " as explicitly requested. Detect the source language automatically.";
+            if (sourceLanguage != null && direction == OutputLanguage.Auto)
                 routing = "Source language: " + sourceLanguage + ". Translate into " +
                     (sourceLanguage == "English" ? chinese : "English") + ".";
+            else if (sourceLanguage != null) routing += " Source language: " + sourceLanguage + ".";
             var request = new Request {
                 model = provider.Model.Trim(),
                 messages = new[] {
