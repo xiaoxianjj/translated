@@ -13,6 +13,8 @@ if errorlevel 1 exit /b 1
 if errorlevel 1 exit /b 1
 "%ROOT%Windows\Tests\bin\Release\net48\Translated.Tests.exe"
 if errorlevel 1 exit /b 1
+"%ROOT%Windows\Tests\bin\Release\net48\Translated.Tests.exe" --lifecycle
+if errorlevel 1 exit /b 1
 if /I "%~1"=="--desktop" (
   "%ROOT%Windows\Tests\bin\Release\net48\Translated.Tests.exe" --desktop
   if errorlevel 1 exit /b 1

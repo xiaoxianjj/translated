@@ -29,7 +29,7 @@ namespace Translated
         static readonly uint ReopenMessage = RegisterWindowMessage("Translated.Windows.Reopen.82878f02");
         const uint CustomShortcutMessage = 0x8000 + 117;
         readonly int header = Marshal.SizeOf<Header>();
-        readonly IntPtr packet = Marshal.AllocHGlobal(64);
+        IntPtr packet = Marshal.AllocHGlobal(64);
         readonly HotkeyBinding binding;
         readonly ShortcutHooks hooks = new ShortcutHooks();
         readonly ForegroundEvent foregroundEvent;
@@ -39,6 +39,7 @@ namespace Translated
         int ignoredMouseDown;
         int ignoredMouseTick;
         bool escapeRegistered;
+        bool disposed;
         int revision;
         readonly bool rawInput;
         public int Revision => Volatile.Read(ref revision);
@@ -96,6 +97,7 @@ namespace Translated
 
         protected override void WndProc(ref Message m)
         {
+            if (disposed) { base.WndProc(ref m); return; }
             if ((m.Msg == 0x312 || (uint)m.Msg == CustomShortcutMessage) && !hooks.Capturing &&
                 binding?.Current != null && m.WParam.ToInt32() == binding.Id)
             {
@@ -170,13 +172,22 @@ namespace Translated
 
         public void Dispose()
         {
-            binding.Release();
-            hooks.Dispose();
-            WatchEscape(false);
-            if (foregroundHook != IntPtr.Zero) UnhookWinEvent(foregroundHook);
-            if (rawInput) RegisterRawInputDevices(new[] { DeviceFor(2, 1), DeviceFor(6, 1) }, 2, (uint)Marshal.SizeOf<Device>());
-            DestroyHandle();
-            Marshal.FreeHGlobal(packet);
+            if (disposed) return;
+            disposed = true;
+            try
+            {
+                binding.Release();
+                hooks.Dispose();
+                WatchEscape(false);
+                if (foregroundHook != IntPtr.Zero) UnhookWinEvent(foregroundHook);
+                if (rawInput) RegisterRawInputDevices(new[] { DeviceFor(2, 1), DeviceFor(6, 1) }, 2, (uint)Marshal.SizeOf<Device>());
+                DestroyHandle();
+            }
+            finally
+            {
+                var buffer = Interlocked.Exchange(ref packet,IntPtr.Zero);
+                if (buffer != IntPtr.Zero) Marshal.FreeHGlobal(buffer);
+            }
         }
     }
 }

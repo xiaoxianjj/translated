@@ -1,4 +1,5 @@
 using System;
+using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Windows;
 using System.Windows.Controls;
@@ -17,6 +18,7 @@ namespace Translated
         [DllImport("user32.dll")] static extern bool IsWindow(IntPtr hwnd);
         [DllImport("user32.dll")] static extern bool IsIconic(IntPtr hwnd);
         readonly TranslatorApp app;
+        readonly Action requestClose;
         readonly DispatcherTimer foregroundCheck = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(120) };
         int? outsideSince;
         bool loadingPicker;
@@ -29,12 +31,13 @@ namespace Translated
         internal System.Drawing.Rectangle PixelBounds { get; private set; }
         internal bool ChoosingLanguage => TargetPicker.IsDropDownOpen;
 
-        internal TranslationCard(TranslatorApp app)
+        internal TranslationCard(TranslatorApp app, Action requestClose = null)
         {
             this.app = app;
+            this.requestClose = requestClose ?? (() => app.Cancel("card-close"));
             InitializeComponent();
             TargetPicker.ItemsSource = TranslationLanguages.All;
-            foregroundCheck.Tick += CheckForeground;
+            foregroundCheck.Tick += (s,e) => CheckForegroundState();
             Closed += (s,e) => foregroundCheck.Stop();
         }
 
@@ -59,7 +62,7 @@ namespace Translated
             if (sourceWindow != IntPtr.Zero) foregroundCheck.Start();
         }
 
-        void CheckForeground(object sender, EventArgs e)
+        internal void CheckForegroundState()
         {
             if (!IsVisible || Session == Guid.Empty || SourceWindow == IntPtr.Zero) { foregroundCheck.Stop(); return; }
             if (!IsWindow(SourceWindow) || IsIconic(SourceWindow)) { app.DismissCard("source-unavailable"); return; }
@@ -113,7 +116,7 @@ namespace Translated
             if (!loadingPicker && IsVisible && Source != null) app.RetranslateCard(Target);
         }
         void RetryClick(object sender, RoutedEventArgs e) => app.RetranslateCard(Target);
-        void CloseClick(object sender, RoutedEventArgs e) => app.Cancel();
+        void CloseClick(object sender, RoutedEventArgs e) => Close();
         void CopyClick(object sender, RoutedEventArgs e)
         {
             try { app.CopyManually(Translation.Text); Status.Text = "已复制"; }
@@ -124,10 +127,20 @@ namespace Translated
             if (e.Key == Key.Escape)
             {
                 if (ChoosingLanguage) TargetPicker.IsDropDownOpen = false;
-                else app.Cancel();
+                else Close();
                 e.Handled = true;
             }
             else base.OnPreviewKeyDown(e);
+        }
+        protected override void OnClosing(CancelEventArgs e)
+        {
+            if (!Disposing)
+            {
+                requestClose();
+                Dismiss();
+                e.Cancel = true;
+            }
+            base.OnClosing(e);
         }
     }
 }

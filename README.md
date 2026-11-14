@@ -27,7 +27,7 @@ API key 存在 Windows 凭据管理器中，并按服务和接口地址区分。
 .\build-local.cmd
 ```
 
-这个命令构建 Release 版本并运行核心及本地回环测试。可执行文件位于 `Windows\bin\Release\net48\Translated.exe`。在可交互的 Windows 桌面上运行 `.\build-local.cmd --desktop`，可以额外测试快捷键、选区和剪贴板。
+这个命令构建 Release 版本并运行核心、本地回环及无可见窗口的生命周期测试，覆盖重复退出、关窗取消、配置快照和小工作区布局。可执行文件位于 `Windows\bin\Release\net48\Translated.exe`。在可交互的 Windows 桌面上运行 `.\build-local.cmd --desktop`，可以额外测试快捷键、选区和剪贴板。
 
 安装 Python 3 后，可以用打包脚本生成便携包。
 

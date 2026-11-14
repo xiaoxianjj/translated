@@ -46,6 +46,7 @@ namespace Translated
             internal string Target;
             internal Guid CardId;
             internal IntPtr OriginWindow;
+            internal TranslationSettings Settings;
             internal CancellationToken Token => Stop.Token;
             public void Dispose() => Stop.Dispose();
         }
@@ -65,11 +66,14 @@ namespace Translated
         readonly TranslationCard card;
         readonly SemaphoreSlim jobGate = new SemaphoreSlim(1);
         readonly SemaphoreSlim copyProbe = new SemaphoreSlim(1);
+        readonly CancellationTokenSource selectionStop = new CancellationTokenSource();
+        readonly HashSet<Task> selectionTasks = new HashSet<Task>();
         Job active;
         PendingPaste pendingPaste;
         Point down, lastClick;
         IntPtr downWindow, lastClickWindow;
         int clickTime, gestureVersion;
+        bool disposed;
         public Preferences Prefs { get; private set; }
         public bool Closing { get; private set; }
         public bool HotkeyReady => listener.Registered;
@@ -77,7 +81,7 @@ namespace Translated
         internal void EndShortcutCapture() => listener.EndCapture();
         internal bool Busy => active != null;
 
-        internal TranslatorApp(string settingsPath = null, bool open = true)
+        internal TranslatorApp(string settingsPath = null, bool open = true, bool showTray = true)
         {
             diagnosticEnabled = settingsPath == null;
             configFile = settingsPath ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
@@ -88,7 +92,7 @@ namespace Translated
             try { listener.Apply(Prefs.Hotkey, () => {}); }
             catch (Exception e) { startup = e.Message; }
             if (!listener.Monitoring) startup = "系统输入监听不可用，译文会保留在结果窗口。";
-            tray = new NotifyIcon { Icon = icon, Text = "Translated · 划词翻译", ContextMenuStrip = menu, Visible = true };
+            tray = new NotifyIcon { Icon = icon, Text = "Translated · 划词翻译", ContextMenuStrip = menu, Visible = showTray };
             workspace = new Workspace(this); result = new ResultWindow(this); card = new TranslationCard(this);
             menu.Items.Add("Translate", null, (s,e) => workspace.Open(false));
             reviewItem = (ToolStripMenuItem)menu.Items.Add("Translation result", null, (s,e) => result.Present(true));
@@ -152,17 +156,12 @@ namespace Translated
             Prefs = prefs;
         }
 
-        async void HandleCardForeground(IntPtr window)
+        void HandleCardForeground(IntPtr window)
         {
             // Opening a window can generate transient activation notifications. Only
             // dismiss a card already shown, after confirming a sustained app switch.
             if (!card.IsVisible || window == IntPtr.Zero || window == card.SourceWindow || card.OwnsWindow(window)) return;
-            var session = card.Session;
-            await Task.Delay(220);
-            if (Closing || !card.IsVisible || card.Session != session) return;
-            var current = Desktop.GetForegroundWindow();
-            if (current != IntPtr.Zero && current != card.SourceWindow && !card.OwnsWindow(current))
-                DismissCard("foreground-switch");
+            if (!Closing) card.CheckForegroundState();
         }
 
         public void SaveShortcut(Shortcut combo)
@@ -208,7 +207,14 @@ namespace Translated
             if (drag || twice || Desktop.Down(0x10)) ShowSelectionButton(window,new Gesture { Start = down, End = point });
         }
 
-        async void ShowSelectionButton(IntPtr window, Gesture gesture)
+        void ShowSelectionButton(IntPtr window, Gesture gesture)
+        {
+            if (Closing) return;
+            selectionTasks.RemoveWhere(task=>task.IsCompleted);
+            selectionTasks.Add(ReadSelectionButton(window,gesture,selectionStop.Token));
+        }
+
+        async Task ReadSelectionButton(IntPtr window, Gesture gesture, CancellationToken token)
         {
             int version = ++gestureVersion, revision = listener.Revision;
             var focus = Desktop.Focus(window);
@@ -218,16 +224,16 @@ namespace Translated
             {
                 foreach (int delay in new[] { 140, 230 })
                 {
-                    await Task.Delay(delay);
+                    await Task.Delay(delay,token);
                     if (!Current()) return;
                     bool compatibility = Prefs.WeChatCopy && SelectionReader.WeChat(window);
-                    var target = await SelectionReader.Query(() => SelectionReader.Read(window,gesture,compatibility,Current),CancellationToken.None);
+                    var target = await SelectionReader.Query(() => SelectionReader.Read(window,gesture,compatibility,Current),token);
                     if (!Current()) return;
                     if (target == null) continue;
                     if (target.Text == null)
                     {
                         if (active != null || (!compatibility && (target.Range == null || SelectionReader.WeChat(window)))) return;
-                        var read = await ReadWithCopy(target,ClipboardAccess.Sequence,Current,CancellationToken.None);
+                        var read = await ReadWithCopy(target,ClipboardAccess.Sequence,Current,token);
                         if (read == null || !Current() || !Passage.HasLetter(read.Text)) return;
                         target.Text = read.Text;
                     }
@@ -477,9 +483,9 @@ namespace Translated
         async Task<string> Translate(Job job)
         {
             Passage.Validate(job.Source);
-            if (!Prefs.Configured) throw new InvalidOperationException("请在 Settings 选择翻译服务并保存设置。");
-            var profile = Prefs.Profile(Prefs.Active);
-            return await Translator.Translate(job.Source,profile,Credentials.Load(profile),Prefs.Traditional,job.Token,
+            if (!job.Settings.Configured) throw new InvalidOperationException("请在 Settings 选择翻译服务并保存设置。");
+            var profile = job.Settings.Provider;
+            return await Translator.Translate(job.Source,profile,Credentials.Load(profile),job.Settings.Traditional,job.Token,
                 direction:TranslationLanguages.Find(job.Target).Direction,sourceLanguage:job.Language);
         }
 
@@ -515,7 +521,7 @@ namespace Translated
                 string key = draftKey.Length == 0 ? Credentials.Load(profile) : draftKey;
                 profile.Validate(key);
                 workspace.SettingsText("Testing…", false);
-                string text = await Translator.Translate(job.Source,profile,key,Prefs.Traditional,job.Token,sourceLanguage:"English");
+                string text = await Translator.Translate(job.Source,profile,key,job.Settings.Traditional,job.Token,sourceLanguage:"English");
                 job.Token.ThrowIfCancellationRequested();
                 workspace.SettingsText("Hello → " + text,false); tray.Text = "Translated · Ready";
             });
@@ -550,7 +556,8 @@ namespace Translated
             if (Closing) return;
             var previous = active;
             var job = new Job { Kind = kind, Source = source, Language = language,
-                Target = target ?? Prefs.TargetLanguage, CardId = cardId ?? Guid.NewGuid(), OriginWindow = originWindow, StatusPoint = Cursor.Position };
+                Settings = TranslationSettings.Capture(Prefs), Target = target ?? Prefs.TargetLanguage,
+                CardId = cardId ?? Guid.NewGuid(), OriginWindow = originWindow, StatusPoint = Cursor.Position };
             if (!cardId.HasValue) card.Dismiss();
             active = job; gestureVersion++; popup.Dismiss();
             motion.Dismiss();
@@ -618,20 +625,24 @@ namespace Translated
             if (job != null) tray.Text = "Translated · Cancelled";
             job?.Stop.Cancel();
         }
-        async void Quit()
+        internal async Task Shutdown()
         {
             if (Closing) return;
-            Closing = true; active?.Stop.Cancel();
+            Closing = true; selectionStop.Cancel(); active?.Stop.Cancel();
+            await Task.WhenAll(selectionTasks.ToArray());
             await jobGate.WaitAsync(); jobGate.Release();
             await copyProbe.WaitAsync(); copyProbe.Release();
             tray.Visible = false; ExitThread();
         }
+        async void Quit() => await Shutdown();
         protected override void Dispose(bool disposing)
         {
-            if (disposing)
+            if (disposing && !disposed)
             {
-                Closing = true; tray.Visible = false;
+                disposed = true;
+                Closing = true; selectionStop.Cancel(); tray.Visible = false;
                 listener.Dispose(); popup.Dispose(); motion.Dispose(); card.Dispose(); result.Dispose(); workspace.Dispose(); tray.Dispose(); menu.Dispose(); icon.Dispose();
+                selectionStop.Dispose();
             }
             base.Dispose(disposing);
         }

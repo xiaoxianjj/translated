@@ -47,6 +47,8 @@ namespace Translated.Tests
             { ShortcutDesktopChecks.InjectKey(fixtureKey,args[2]=="1",fixtureWindow); return 0; }
             if (args.Length == 1 && args[0] == "--shortcuts") { ShortcutDesktopChecks.Run(); return 0; }
             if (args.Length == 1 && args[0] == "--cards") { TranslationCardChecks.Run(); return 0; }
+            if ((args.Length == 1 || args.Length == 2) && args[0] == "--lifecycle") { LifecycleChecks.Run(args.Length==2?args[1]:null); return 0; }
+            if (args.Length == 1 && args[0] == "--shutdown-cycle") { LifecycleChecks.ShutdownCycle(); return 0; }
             if (args.Length == 1 && args[0] == "--cards-real-hotkey") { TranslationCardChecks.Run(true); return 0; }
             if (args.Length == 1 && args[0] == "--card-preview") { TranslationCardChecks.Preview(); return 0; }
             if (args.Length == 1 && args[0] == "--shortcut-keyboard") { ShortcutDesktopChecks.RunKeyboardFixture(); return 0; }
@@ -79,6 +81,30 @@ namespace Translated.Tests
         {
             var local = Provider.Default(Provider.Custom); local.Model = "fixture";
             var ds = Provider.Default(Provider.DeepSeek);
+            Check("queued translations keep independent provider and language preferences", () => {
+                var prefs=new Preferences { Active=Provider.Custom, Configured=true, Traditional=true };
+                var profile=prefs.Profile(Provider.Custom);
+                profile.BaseUrl="http://localhost:12345/original"; profile.Model="original-model"; profile.Reasoning=true;
+                var snapshot=TranslationSettings.Capture(prefs);
+                profile.BaseUrl="http://localhost:23456/changed"; profile.Model="changed-model"; profile.Reasoning=false;
+                prefs.Active=Provider.OpenAI; prefs.Configured=false; prefs.Traditional=false;
+                Equal(Provider.Custom,snapshot.Provider.Name); Equal("original-model",snapshot.Provider.Model);
+                Equal("http://localhost:12345/original",snapshot.Provider.BaseUrl);
+                Require(snapshot.Provider.Reasoning && snapshot.Configured && snapshot.Traditional);
+            });
+            Check("shortcut editor fits high-DPI and small work areas without oversized minimums", () => {
+                foreach(var work in new[] { new[]{1920d,1040d},new[]{960d,520d},new[]{1092.8,582.4},new[]{640d,340d} })
+                {
+                    var size=EditorSizing.Fit(work[0],work[1],1190,790);
+                    Require(size.Width<=work[0] && size.Height<=work[1]);
+                    Require(size.MinWidth<=size.Width && size.MinHeight<=size.Height);
+                    Require(size.Width>0 && size.Height>0);
+                }
+                var small=EditorSizing.Fit(960,520,1190,790);
+                Require(small.MinHeight<660 && small.Height<=520);
+                var large=EditorSizing.Fit(1920,1040,1190,790);
+                Equal(1190d,large.Width); Equal(790d,large.Height);
+            });
             Check("all 21 explicit target languages override automatic routing and source hints", () => {
                 Equal(22, TranslationLanguages.All.Length);
                 Equal(22, TranslationLanguages.All.Select(l => l.Code).Distinct().Count());
