@@ -109,13 +109,14 @@ appendButton.onclick=()=>{rich.dataset.added='Changed suffix';const node=documen
  document.title='Translated fixture Append outside selection';};
 </script>";
 
-        sealed class LocalProvider : IDisposable
+        internal sealed class LocalProvider : IDisposable
         {
             readonly TcpListener server = new TcpListener(IPAddress.Loopback,0);
             TaskCompletionSource<bool> nextResponse;
             internal int Calls;
             internal string LastModel, LastInstruction, LastSource;
             internal volatile bool Fail;
+            internal Func<string,string,string> Translation;
             internal string Address { get; }
             internal Action HoldNextResponse()
             {
@@ -161,6 +162,7 @@ appendButton.onclick=()=>{rich.dataset.added='Changed suffix';const node=documen
                             payload.text.Replace(FirstParagraph,"First.").Replace(LastParagraph,"Second.") :
                             payload.text=="See you tomorrow." ? "明天见。" :
                             payload.text=="明天见。" ? "See you tomorrow!" : "你好";
+                        if (Translation != null) translation = Translation(LastInstruction,payload.text);
                         var hold=Interlocked.Exchange(ref nextResponse,null);
                         Interlocked.Increment(ref Calls);
                         if (hold == null) Thread.Sleep(450);
@@ -221,7 +223,7 @@ appendButton.onclick=()=>{rich.dataset.added='Changed suffix';const node=documen
             (await FindElement(window,name)).Current.BoundingRectangle;
         static Point Center(System.Windows.Rect r) => new Point((int)(r.X+r.Width/2),(int)(r.Y+r.Height/2));
 
-        internal static void Run(string executable, bool cold = false, bool busy = false, bool rangeOwner = false, bool repeat = false, bool multiline = false)
+        internal static void Run(string executable, bool cold = false, bool busy = false, bool rangeOwner = false, bool repeat = false, bool multiline = false, bool cardCompat = false)
         {
             Forms.Application.EnableVisualStyles();
             Forms.Application.SetCompatibleTextRenderingDefault(false);
@@ -231,6 +233,10 @@ appendButton.onclick=()=>{rich.dataset.added='Changed suffix';const node=documen
             string page=Path.Combine(dir,"selection.html"), settings=Path.Combine(dir,"settings.json");
             string ready="Translated fixture ready "+Guid.NewGuid().ToString("N");
             string fixture=Page.Replace("Translated fixture ready",ready);
+            if (cardCompat) fixture="<!doctype html><meta charset=utf-8><title>"+ready+"</title>"+
+                "<body style='font:24px sans-serif;padding:50px'><p id='text' tabindex='0'>hello</p><script>"+
+                "function prepare(){const p=document.getElementById('text');p.focus();const r=new Range();r.selectNodeContents(p);const s=getSelection();s.removeAllRanges();s.addRange(r)}"+
+                "addEventListener('load',prepare);addEventListener('focus',prepare);</script>";
             if (cold) fixture=fixture.Replace("</script>", @"
 let prepared=false;
 function prepareCold(){if(prepared)return;prepared=true;rich.focus();let p=rich.firstElementChild;
@@ -257,8 +263,9 @@ app.whenReady().then(()=>{
             Exception failure=null;
             using(var server=new LocalProvider())
             {
-                var p=new Preferences { Active=Provider.Custom, Configured=true, Hotkey=new Shortcut { Modifiers=7, Key=Shortcut.F1+8 } };
+                var p=new Preferences { Active=Provider.Custom, Configured=true, SelectionMode="automatic", Hotkey=new Shortcut { Modifiers=7, Key=Shortcut.F1+8 } };
                 if (cold) { p.Hotkey = new Shortcut { Modifiers=Shortcut.Alt, Key='J' }; p.Floating=false; }
+                if (cardCompat) { p.SelectionMode="card"; p.Floating=false; }
                 p.Profile(Provider.Custom).Model="desktop-fixture";p.Profile(Provider.Custom).BaseUrl=server.Address;p.Save(settings);
                 using(var app=new TranslatorApp(settings,false))
                 using(var owner=new Forms.Form())
@@ -272,7 +279,7 @@ app.whenReady().then(()=>{
                         try
                         {
                             if(!app.HotkeyReady)throw new InvalidOperationException("Test shortcut already in use.");
-                            ClipboardAccess.Write(owner.Handle,"translated fixture prior",ClipboardAccess.Sequence,true,out previous);
+                            if (!cardCompat) ClipboardAccess.Write(owner.Handle,"translated fixture prior",ClipboardAccess.Sequence,true,out previous);
                             launcher.Start();
                             await Wait(()=>{
                                 if (browser!=null)return true;
@@ -283,7 +290,8 @@ app.whenReady().then(()=>{
                                 }
                                 return false;
                             }, "isolated fixture window",15000);
-                            if (multiline) await CheckMultiline(browser,app,server,dir);
+                            if (cardCompat) await CheckCardCompat(browser,app,server);
+                            else if (multiline) await CheckMultiline(browser,app,server,dir);
                             else if (repeat) await CheckRepeat(browser,app,server,owner.Handle);
                             else if (rangeOwner) await CheckRangeOwner(browser,app,server);
                             else if (cold) await CheckCold(browser,app,server,busy);
@@ -312,6 +320,32 @@ app.whenReady().then(()=>{
                 catch(IOException){Thread.Sleep(200);} catch(UnauthorizedAccessException){Thread.Sleep(200);}
             }
             if(failure!=null)throw failure;
+        }
+
+        static async Task CheckCardCompat(Process browser, TranslatorApp app, LocalProvider server)
+        {
+            await ActivateFixture(browser);
+            await Task.Delay(200);
+            var window=browser.MainWindowHandle;
+            bool Current()=>Desktop.GetForegroundWindow()==window;
+            var fallback=await SelectionReader.Query(()=>SelectionReader.ReadCopyCandidate(window,Forms.Cursor.Position,Current),CancellationToken.None);
+            Pass(fallback!=null && fallback.CopyOnly && !fallback.Writable && fallback.Range==null,
+                "Chromium compatibility capture grants copy-only access without a text range");
+            string clipboard=Forms.Clipboard.ContainsText()?Forms.Clipboard.GetText():null;
+            var card=Wpf.Current.Windows.OfType<TranslationCard>().Single();
+            // Enter at the recovered copy-only snapshot, even if this Chrome version
+            // also exposes TextPattern. The remaining capture/translation path is shared.
+            typeof(TranslatorApp).GetMethod("StartSelection",BindingFlags.Instance|BindingFlags.NonPublic)
+                .Invoke(app,new object[] { window, Forms.Cursor.Position, fallback });
+            await Wait(()=>!app.Busy && card.IsVisible,"compatibility card result",9000);
+            if(server.Calls!=1) throw new InvalidOperationException("Compatibility capture failed: "+card.Status.Text);
+            Pass(server.LastSource=="hello" && card.Translation.Text=="你好","copy-only capture reads exactly the browser selection and shows its translation");
+            Pass((Forms.Clipboard.ContainsText()?Forms.Clipboard.GetText():null)==clipboard,"compatibility capture restores prior clipboard text");
+            Pass(card.Topmost,"translation card is visible above its active source");
+            var workspace=Wpf.Current.Windows.OfType<Workspace>().Single();
+            workspace.Open(false);
+            await Wait(()=>!card.IsVisible,"automatic dismissal after switching windows");
+            Pass(!card.Topmost,"switching away from the source browser dismisses the card and clears topmost");
         }
 
         static async Task CheckRepeat(Process browser, TranslatorApp app, LocalProvider server, IntPtr owner)

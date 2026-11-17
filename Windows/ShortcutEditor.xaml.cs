@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using System.Windows;
 using System.Windows.Automation;
@@ -9,16 +10,23 @@ using System.Windows.Controls.Primitives;
 using System.Windows.Input;
 using System.Windows.Interop;
 using System.Windows.Media;
+using System.Windows.Threading;
+using Forms = System.Windows.Forms;
 
 namespace Translated
 {
     internal partial class ShortcutEditor : Window, IDisposable
     {
+        [DllImport("user32.dll")] static extern uint GetDpiForWindow(IntPtr window);
+        [DllImport("user32.dll")] static extern bool GetWindowRect(IntPtr window, out NativeRect rect);
+        [DllImport("user32.dll")] static extern bool SetWindowPos(IntPtr window, IntPtr after, int x, int y, int width, int height, uint flags);
+        [StructLayout(LayoutKind.Sequential)] struct NativeRect { internal int Left,Top,Right,Bottom; }
         readonly TranslatorApp app;
         readonly ShortcutRecorder recorder;
         readonly List<ToggleButton> keycaps = new List<ToggleButton>();
         readonly List<ToggleButton> extraFunctions = new List<ToggleButton>();
         bool capturing, closed;
+        HwndSource nativeSource;
         internal Shortcut Draft => recorder.Candidate;
         internal ShortcutEditor(TranslatorApp app)
         {
@@ -26,8 +34,7 @@ namespace Translated
             recorder = new ShortcutRecorder(app.Prefs.Hotkey);
             InitializeComponent();
             Icon = System.Windows.Media.Imaging.BitmapFrame.Create(new Uri("pack://application:,,,/Translated;component/Assets/Brand.png"));
-            Width = Math.Max(MinWidth, Math.Min(Width, SystemParameters.WorkArea.Width - 40));
-            Height = Math.Max(MinHeight, Math.Min(Height, SystemParameters.WorkArea.Height - 40));
+            Fit(SystemParameters.WorkArea.Width,SystemParameters.WorkArea.Height);
             BuildKeyboard();
             foreach (var cap in new[] { MiddleKey, Mouse4Key, Mouse5Key })
             {
@@ -37,8 +44,49 @@ namespace Translated
             }
             Refresh();
             Loaded += OnLoaded;
+            SourceInitialized += (s,e) => {
+                var handle = new WindowInteropHelper(this).Handle;
+                nativeSource = HwndSource.FromHwnd(handle);
+                nativeSource.AddHook(NativeMessage);
+                FitToMonitor(true);
+            };
             Deactivated += (s, e) => { recorder.Release(); if (capturing) Pause(); };
-            Closed += (s, e) => { closed = true; app.EndShortcutCapture(); };
+            Closed += (s, e) => {
+                closed = true;
+                if (nativeSource != null && !nativeSource.IsDisposed) nativeSource.RemoveHook(NativeMessage);
+                app.EndShortcutCapture();
+            };
+        }
+        void Fit(double workWidth, double workHeight)
+        {
+            var size = EditorSizing.Fit(workWidth,workHeight,Width,Height);
+            MinWidth=size.MinWidth; MinHeight=size.MinHeight;
+            Width=size.Width; Height=size.Height;
+        }
+        void FitToMonitor(bool initial)
+        {
+            var handle = new WindowInteropHelper(this).Handle;
+            var reference = initial && Owner != null ? new WindowInteropHelper(Owner).Handle : handle;
+            var screen = reference == IntPtr.Zero ? Forms.Screen.FromPoint(Forms.Cursor.Position) : Forms.Screen.FromHandle(reference);
+            var area = screen.WorkingArea;
+            double scale = 0;
+            try { if (reference != IntPtr.Zero) scale=GetDpiForWindow(reference)/96d; }
+            catch (EntryPointNotFoundException) { /* Earlier Windows 10 uses the monitor DPI fallback. */ }
+            if (scale <= 0) scale=OverlayPlacement.Scale(new System.Drawing.Point(area.Left+area.Width/2,area.Top+area.Height/2));
+            if (scale <= 0) scale=1;
+            Fit(area.Width/scale,area.Height/scale);
+            if (!initial && GetWindowRect(handle,out var rect))
+            {
+                int x=Math.Max(area.Left,Math.Min(rect.Left,area.Right-(rect.Right-rect.Left)));
+                int y=Math.Max(area.Top,Math.Min(rect.Top,area.Bottom-(rect.Bottom-rect.Top)));
+                SetWindowPos(handle,IntPtr.Zero,x,y,0,0,0x15); // no size, Z-order or activation change
+            }
+        }
+        IntPtr NativeMessage(IntPtr window,int message,IntPtr w,IntPtr l,ref bool handled)
+        {
+            if (message == 0x02E0 || message == 0x007E || message == 0x001A)
+                Dispatcher.BeginInvoke(DispatcherPriority.Loaded,new Action(() => { if (!closed) FitToMonitor(false); }));
+            return IntPtr.Zero;
         }
         async void OnLoaded(object sender, RoutedEventArgs args)
         {

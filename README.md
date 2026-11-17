@@ -7,9 +7,9 @@ Translated 提供 Windows 和 macOS 两个独立版本。选择适合自己系�
 
 ## Windows
 
-Translated 是 Windows 10 和 Windows 11 上的划词翻译工具。选中文字后按 **Ctrl + Shift + F8**，或点击选区旁的 **Translate**。英文译为简体或繁体中文，其他语言译为英文。快捷键、目标中文和选区按钮都可以在 Settings 中调整。
+Translated 是 Windows 10 和 Windows 11 上的划词翻译工具。选中文字后按 **Ctrl + Shift + F8**，或点击选区旁的 **Translate**，默认在选区旁弹出译文卡片，直接查看、选取和复制译文。卡片及主界面可选择 21 种目标语言，切换后使用同一份原文重新翻译，并记住选择；也保留自动中英互译。
 
-在可编辑的输入框中，程序会核对选区后原位替换文字。在只读区域中，译文会复制到剪贴板。如果焦点或选区在翻译过程中发生变化，可以从系统托盘的 **Translation result** 取回译文。
+卡片模式保留原文，不自动覆盖剪贴板。在 Settings 关闭“划词后弹出译文卡片”，可恢复自动交付：可编辑输入框核对选区后原位替换，只读区域复制完整译文；不适合自动交付时从系统托盘的 **Translation result** 取回结果。[译文卡片与多语言说明](docs/译文卡片与多语言.md)。
 
 Windows 的 Settings 现在提供 **自定义快捷键…**：可通过实体按键录制，或点击拟物键盘与鼠标中键、M4/M5 侧键组合，预览点亮后保存。支持键盘多键组合及键鼠混合组合，并兼容旧快捷键配置。[查看使用与验证说明](docs/自定义快捷键.md)。
 
@@ -27,7 +27,7 @@ API key 存在 Windows 凭据管理器中，并按服务和接口地址区分。
 .\build-local.cmd
 ```
 
-这个命令构建 Release 版本并运行核心及本地回环测试。可执行文件位于 `Windows\bin\Release\net48\Translated.exe`。在可交互的 Windows 桌面上运行 `.\build-local.cmd --desktop`，可以额外测试快捷键、选区和剪贴板。
+这个命令构建 Release 版本并运行核心、本地回环及无可见窗口的生命周期测试，覆盖重复退出、关窗取消、配置快照和小工作区布局。可执行文件位于 `Windows\bin\Release\net48\Translated.exe`。在可交互的 Windows 桌面上运行 `.\build-local.cmd --desktop`，可以额外测试快捷键、选区和剪贴板。
 
 安装 Python 3 后，可以用打包脚本生成便携包。
 

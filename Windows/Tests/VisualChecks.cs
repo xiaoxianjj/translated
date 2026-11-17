@@ -120,6 +120,18 @@ namespace Translated.Tests
             }
             workspace.SettingsPage.ScrollToBottom(); await Task.Delay(80);
             Save(workspace,Path.Combine(folder,"Settings-options.png"));
+            var card=Application.Current.Windows.OfType<TranslationCard>().Single();
+            var session=Guid.NewGuid();
+            var anchor=new System.Drawing.Point(700,300);
+            card.Begin(session,"Hello, welcome to the translation preview.",null,"ja",anchor);
+            await Task.Delay(80); Save(card,Path.Combine(folder,"Card-loading.png"),1.5);
+            card.Complete(session,"こんにちは。翻訳プレビューへようこそ。\n\n選択した文章の翻訳をここで直接確認できます。");
+            await Task.Delay(80); Save(card,Path.Combine(folder,"Card-japanese.png"),1.5);
+            Theme.ApplyPalette(true,false); await Task.Delay(70);
+            Save(card,Path.Combine(folder,"Card-dark.png"),1.5); Theme.Refresh();
+            card.Complete(session,null,"无法连接翻译服务，请检查网络和接口地址。");
+            await Task.Delay(80); Save(card,Path.Combine(folder,"Card-error.png"),1.5);
+            card.Dismiss();
             workspace.Width = 465; workspace.Height = 510; workspace.Open(false); await Task.Delay(80);
             Save(workspace,Path.Combine(folder,"Inline-result-small.png"));
             workspace.EditorScroll.ScrollToBottom(); await Task.Delay(80);
@@ -130,13 +142,17 @@ namespace Translated.Tests
             foreach (double scale in new[]{1d,1.5,2})
             {
                 var edge=new System.Drawing.Point(area.Right-1,area.Bottom-1);
-                var near=OverlayPlacement.Bounds(area,edge,scale,88,31,true);
-                if (!area.Contains(near) || near.Bottom>=edge.Y)
-                    throw new Exception("Invalid overlay placement at "+area+" / "+scale);
+                foreach (var size in new[]{new System.Drawing.Size(88,31),new System.Drawing.Size(450,356)})
+                {
+                    var near=OverlayPlacement.Bounds(area,edge,scale,size.Width,size.Height,true);
+                    if (!area.Contains(near) || near.Bottom>=edge.Y)
+                        throw new Exception("Invalid overlay placement at "+area+" / "+scale);
+                }
             }
             Console.WriteLine("PASS  rendered both pages and inline translation at normal and minimum sizes");
             Console.WriteLine("PASS  dark palette and negative-coordinate monitor geometry at 100%, 150% and 200%");
             Console.WriteLine("PASS  custom keyboard/mouse shortcut editor at normal and minimum sizes in light and dark themes");
+            Console.WriteLine("PASS  translation card loading, Japanese result, dark theme, errors and monitor-edge geometry");
         }
     }
 }

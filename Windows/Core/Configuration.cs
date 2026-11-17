@@ -124,6 +124,8 @@ namespace Translated
         [DataMember] public bool Replace = true;
         [DataMember] public bool Configured;
         [DataMember] public bool WeChatCopy;
+        [DataMember] public string SelectionMode = "card";
+        [DataMember] public string TargetLanguage = "auto";
 
         public Provider Profile(string name) => Profiles.FirstOrDefault(p => p != null && p.Name == name) ?? Provider.Default(name);
         public Preferences Copy() => Json.Read<Preferences>(Json.Write(this));
@@ -136,6 +138,8 @@ namespace Translated
             prefs.Profiles = prefs.Profiles ?? new Provider[0];
             if (!Provider.Choices.Contains(prefs.Active)) prefs.Active = Provider.DeepSeek;
             if (prefs.Hotkey == null || !prefs.Hotkey.Valid) prefs.Hotkey = Shortcut.Default();
+            if (prefs.SelectionMode != "automatic") prefs.SelectionMode = "card";
+            prefs.TargetLanguage = TranslationLanguages.Find(prefs.TargetLanguage).Code;
             return prefs;
         }
 
